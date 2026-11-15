@@ -1,0 +1,328 @@
+<!DOCTYPE html>
+<html xmlns:th="http://www.thymeleaf.org">
+<body>
+<th:block th:fragment="content">
+
+  <div class="page-header">
+    <div>
+      <h1 class="page-title">내 프로필</h1>
+      <p class="page-desc">내 계정 정보와 GitLab · 오피스 연동을 관리합니다.</p>
+    </div>
+  </div>
+
+  <!-- W-05: 최초 로그인(또는 관리자 초기화) 비밀번호 강제 변경 안내 -->
+  <div id="force-password-change-notice" class="notice-box warning" th:if="${currentUser?.user?.forcePasswordChange == true}" style="margin-bottom:16px">
+    <div>보안을 위해 <b>비밀번호를 변경해야 다른 메뉴를 사용할 수 있습니다.</b> 새 비밀번호를 설정해 주세요.</div>
+  </div>
+
+  <div class="profile-grid">
+    <div class="section-card">
+      <h3 class="section-title">계정 정보</h3>
+      <div style="display:flex;align-items:center;gap:16px;margin-bottom:24px;padding-bottom:20px;border-bottom:1px solid var(--border)">
+        <div style="width:56px;height:56px;border-radius:50%;background:var(--primary);display:flex;align-items:center;justify-content:center;font-size:22px;font-weight:700;color:white;flex-shrink:0"
+             th:text="${currentUser?.name?.substring(0,1) ?: '?'}">사</div>
+        <div style="flex:1;min-width:0">
+          <div style="font-size:18px;font-weight:700" th:text="${currentUser?.name ?: '-'}">사용자</div>
+          <div style="font-size:13px;color:var(--muted)" th:text="${currentUser?.username ?: '-'}">loginId</div>
+        </div>
+        <span th:class="'role-badge ' + ${currentUser?.role?.toLowerCase()?.replace('_','-')}"
+              th:text="${currentUser?.roleLabel ?: '-'}">역할</span>
+      </div>
+
+      <div style="display:flex;flex-direction:column;gap:14px;margin-bottom:24px">
+        <div style="display:flex;justify-content:space-between;align-items:center">
+          <span style="font-size:13px;color:var(--text-secondary)">이름</span>
+          <span style="font-size:14px;font-weight:500" th:text="${currentUser?.user?.name ?: '-'}">사용자</span>
+        </div>
+        <div style="display:flex;justify-content:space-between;align-items:center">
+          <span style="font-size:13px;color:var(--text-secondary)">아이디</span>
+          <span class="mono" style="font-size:13px" th:text="${currentUser?.username ?: '-'}">loginId</span>
+        </div>
+        <div style="display:flex;justify-content:space-between;align-items:center">
+          <span style="font-size:13px;color:var(--text-secondary)">팀</span>
+          <span style="font-size:13px" th:text="${currentUser?.user?.team?.name ?: '-'}">-</span>
+        </div>
+        <div style="display:flex;justify-content:space-between;align-items:center">
+          <span style="font-size:13px;color:var(--text-secondary)">마지막 로그인</span>
+          <span style="font-size:13px;color:var(--muted)"
+                th:text="${currentUser?.user?.lastLoginAt != null ? #temporals.format(currentUser.user.lastLoginAt, 'yyyy-MM-dd HH:mm') : '-'}">-</span>
+        </div>
+        <div style="display:flex;justify-content:space-between;align-items:center">
+          <span style="font-size:13px;color:var(--text-secondary)">계정 등록일</span>
+          <span style="font-size:13px;color:var(--muted)"
+                th:text="${currentUser?.user?.createdAt != null ? #temporals.format(currentUser.user.createdAt, 'yyyy-MM-dd') : '-'}">-</span>
+        </div>
+      </div>
+    </div>
+
+    <div style="display:flex;flex-direction:column;gap:16px">
+      <div class="section-card">
+        <div class="profile-action-row">
+          <div>
+            <div style="font-size:15px;font-weight:600;margin-bottom:4px">비밀번호</div>
+            <div style="font-size:13px;color:var(--muted)">배포시스템 직접 로그인용 비밀번호입니다.</div>
+          </div>
+          <button class="btn btn-primary" onclick="openPasswordModal()">비밀번호 변경</button>
+        </div>
+      </div>
+
+      <div class="section-card">
+        <div class="profile-action-row">
+          <div>
+            <div style="font-size:15px;font-weight:600;margin-bottom:4px">GitLab 계정 연동</div>
+            <div id="profile-gitlab-status">
+              <div th:if="${currentUser?.user?.gitlabToken != null and !#strings.isEmpty(#strings.trim(currentUser?.user?.gitlabUsername))}" style="font-size:13px;color:var(--success)">
+                연동됨 <strong th:text="${currentUser.user.gitlabUsername}">username</strong>
+              </div>
+              <div th:if="${currentUser?.user?.gitlabToken != null and #strings.isEmpty(#strings.trim(currentUser?.user?.gitlabUsername))}" style="font-size:13px;color:var(--warning)" role="status">
+                사용자명 연결 필요 — PAT 변경으로 본인 GitLab 계정을 연결해야 MR을 승인할 수 있습니다.
+              </div>
+            </div>
+            <div th:unless="${currentUser?.user?.gitlabToken != null}" style="font-size:13px;color:var(--muted)">
+              GitLab 개인 접근 토큰(PAT)은 브랜치·파이프라인 조회와 본인 계정의 MR 승인에 사용합니다. MR 병합 계정은 시스템 토큰 정책을 따릅니다.
+            </div>
+          </div>
+          <div class="field-actions">
+            <button class="btn btn-primary" onclick="openGitlabModal()"
+                    th:text="${currentUser?.user?.gitlabToken != null ? 'PAT 변경' : 'GitLab 연동'}">GitLab 연동</button>
+            <button th:if="${currentUser?.user?.gitlabToken != null}"
+                    class="btn btn-ghost" style="color:var(--danger)" onclick="removeGitlabToken()">해제</button>
+          </div>
+        </div>
+      </div>
+
+      <div class="section-card">
+        <div class="profile-action-row">
+          <div>
+            <div style="font-size:15px;font-weight:600;margin-bottom:4px">오피스시스템 SSO 연동</div>
+            <div style="font-size:13px;color:var(--muted)">오피스시스템 마이페이지에 입력할 1회성 연동 코드를 발급합니다.</div>
+            <div id="sso-code-result" class="mono" style="margin-top:8px;font-size:16px;font-weight:800;color:var(--primary)"></div>
+          </div>
+          <button class="btn btn-primary" onclick="issueSsoCode()">연동 코드 발급</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div id="password-modal" class="modal-overlay" style="display:none">
+    <div class="modal" style="width:440px" role="dialog" aria-modal="true" aria-labelledby="password-modal-title">
+      <div class="modal-header">
+        <h3 class="modal-title" id="password-modal-title">비밀번호 변경</h3>
+        <button class="modal-close" onclick="closePasswordModal()" aria-label="닫기">x</button>
+      </div>
+      <div class="modal-body">
+        <div class="form-grid">
+          <div class="form-group full">
+            <label class="form-label" for="pw-current">현재 비밀번호 <span class="req">*</span></label>
+            <input class="form-input" type="password" id="pw-current" autocomplete="current-password">
+          </div>
+          <div class="form-group full">
+            <label class="form-label" for="pw-new">새 비밀번호 <span class="req">*</span></label>
+            <input class="form-input" type="password" id="pw-new" minlength="9" autocomplete="new-password">
+            <p class="form-hint">9자 이상이며 영문·숫자·특수문자를 모두 포함해야 합니다. 현재 비밀번호와 다르게 입력해 주세요.</p>
+          </div>
+          <div class="form-group full">
+            <label class="form-label" for="pw-confirm">새 비밀번호 확인 <span class="req">*</span></label>
+            <input class="form-input" type="password" id="pw-confirm" autocomplete="new-password">
+          </div>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-ghost" onclick="closePasswordModal()">취소</button>
+        <button class="btn btn-primary" onclick="changePassword()">변경 완료</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="gitlab-modal" class="modal-overlay" style="display:none">
+    <div class="modal" style="width:500px" role="dialog" aria-modal="true" aria-labelledby="gitlab-modal-title">
+      <div class="modal-header">
+        <h3 class="modal-title" id="gitlab-modal-title">GitLab 계정 연동</h3>
+        <button class="modal-close" onclick="closeGitlabModal()" aria-label="닫기">x</button>
+      </div>
+      <div class="modal-body">
+        <div class="form-group">
+          <label class="form-label">개인 접근 토큰 <span class="req">*</span></label>
+          <div class="field-actions">
+            <input class="form-input mono" type="password" id="gitlab-token" placeholder="glpat-xxxxxxxxxxxxxxxxxxxx" style="flex:1">
+            <button class="btn btn-ghost" type="button" onclick="toggleTokenVisibility()">보기</button>
+          </div>
+          <p class="form-hint">본인 GitLab 계정에서 발급한 토큰을 입력하세요. MR 승인은 연결된 본인 계정으로만 기록됩니다. 토큰은 저장 후 다시 표시되지 않습니다.</p>
+        </div>
+        <div id="gitlab-token-result" style="font-size:13px;color:var(--muted);min-height:18px;margin-top:4px"></div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-ghost" onclick="closeGitlabModal()">취소</button>
+        <button class="btn btn-ghost" onclick="testGitlabToken()">연결 테스트</button>
+        <button class="btn btn-primary" onclick="saveGitlabToken()">저장</button>
+      </div>
+    </div>
+  </div>
+
+  <script>
+  function getPageCsrf() {
+    return {
+      token: document.querySelector('meta[name="_csrf"]')?.content || '',
+      header: document.querySelector('meta[name="_csrf_header"]')?.content || 'X-XSRF-TOKEN'
+    };
+  }
+
+  function profileFetch(url, options = {}) {
+    const csrf = getPageCsrf();
+    options.credentials = 'same-origin';
+    options.headers = Object.assign({ [csrf.header]: csrf.token }, options.headers || {});
+    return fetch(url, options).then(async response => {
+      const contentType = response.headers.get('content-type') || '';
+      if (response.redirected || contentType.includes('text/html')) {
+        throw new Error('로그인 세션이 만료되었습니다. 다시 로그인 후 시도하세요.');
+      }
+      const data = contentType.includes('application/json') ? await response.json() : null;
+      if (!response.ok) {
+        throw new Error(data?.message || '요청 처리에 실패했습니다. HTTP ' + response.status);
+      }
+      return data;
+    });
+  }
+
+  function openPasswordModal() {
+    document.getElementById('pw-current').value = '';
+    document.getElementById('pw-new').value = '';
+    document.getElementById('pw-confirm').value = '';
+    document.getElementById('password-modal').style.display = 'flex';
+  }
+  function closePasswordModal() {
+    document.getElementById('password-modal').style.display = 'none';
+  }
+  function completePasswordChange() {
+    ['pw-current', 'pw-new', 'pw-confirm'].forEach(id => {
+      document.getElementById(id).value = '';
+    });
+    closePasswordModal();
+    document.getElementById('force-password-change-notice')?.remove();
+    const url = new URL(window.location.href);
+    if (!url.searchParams.has('pwchange')) return;
+    url.searchParams.delete('pwchange');
+    const state = history.state && typeof history.state === 'object' ? { ...history.state } : history.state;
+    if (state?.params && typeof state.params === 'object') {
+      state.params = { ...state.params };
+      delete state.params.pwchange;
+    }
+    history.replaceState(state, '', url.pathname + url.search + url.hash);
+  }
+  function changePassword() {
+    const current = document.getElementById('pw-current').value;
+    const newPw = document.getElementById('pw-new').value;
+    const confirm = document.getElementById('pw-confirm').value;
+    if (!current || !newPw || !confirm) { showToast('모든 항목을 입력하세요.', 'error'); return; }
+    if (newPw.length < 9) { showToast('새 비밀번호는 9자 이상이어야 합니다.', 'error'); return; }
+    if (!/\p{L}/u.test(newPw) || !/\p{Nd}/u.test(newPw) || !/[^\p{L}\p{Nd}\s]/u.test(newPw)) {
+      showToast('새 비밀번호는 영문·숫자·특수문자를 모두 포함해야 합니다.', 'error'); return;
+    }
+    if (newPw === current) { showToast('현재 비밀번호와 다른 새 비밀번호를 입력해 주세요.', 'error'); return; }
+    if (newPw !== confirm) { showToast('새 비밀번호가 일치하지 않습니다.', 'error'); return; }
+    profileFetch('/api/v1/profile/password', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ currentPassword: current, newPassword: newPw })
+    })
+      .then(data => {
+        if (data.success) { showToast('비밀번호가 변경되었습니다.', 'success'); completePasswordChange(); }
+        else showToast(data.message || '비밀번호 변경에 실패했습니다.', 'error');
+      })
+      .catch(error => showToast(error.message || '네트워크 오류가 발생했습니다.', 'error'));
+  }
+
+  function openGitlabModal() {
+    document.getElementById('gitlab-token').value = '';
+    document.getElementById('gitlab-token-result').textContent = '';
+    document.getElementById('gitlab-modal').style.display = 'flex';
+  }
+  function closeGitlabModal() {
+    document.getElementById('gitlab-modal').style.display = 'none';
+  }
+  function toggleTokenVisibility() {
+    const inp = document.getElementById('gitlab-token');
+    inp.type = inp.type === 'password' ? 'text' : 'password';
+  }
+  function testGitlabToken() {
+    const token = document.getElementById('gitlab-token').value.trim();
+    const result = document.getElementById('gitlab-token-result');
+    if (!token) { showToast('토큰을 입력하세요.', 'error'); return; }
+    result.style.color = 'var(--muted)';
+    result.textContent = '확인 중...';
+    profileFetch('/api/v1/profile/gitlab-token', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ token, testOnly: 'true' })
+    })
+      .then(data => {
+        if (data.success) { result.style.color = 'var(--success)'; result.textContent = 'OK ' + data.data.message; }
+        else { result.style.color = 'var(--danger)'; result.textContent = '실패 ' + (data.message || '연결 실패'); }
+      })
+      .catch(error => { result.style.color = 'var(--danger)'; result.textContent = error.message || '네트워크 오류'; });
+  }
+  function saveGitlabToken() {
+    const token = document.getElementById('gitlab-token').value.trim();
+    const result = document.getElementById('gitlab-token-result');
+    result.style.color = 'var(--muted)';
+    result.textContent = '저장 중...';
+    profileFetch('/api/v1/profile/gitlab-token', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ token, testOnly: 'false' })
+    })
+      .then(data => {
+        if (data.success) {
+          showToast(typeof data.data === 'object' ? data.data.message : data.data, 'success');
+          closeGitlabModal();
+          setTimeout(() => navigate('profile'), 600);
+        } else {
+          result.style.color = 'var(--danger)';
+          result.textContent = '실패 ' + (data.message || '저장 실패');
+        }
+      })
+      .catch(error => showToast(error.message || '네트워크 오류가 발생했습니다.', 'error'));
+  }
+  function removeGitlabToken() {
+    openConfirm('GitLab 연동 해제', 'GitLab 계정 연동을 해제하시겠습니까?', () => {
+      profileFetch('/api/v1/profile/gitlab-token', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ token: '' })
+      })
+        .then(data => {
+          if (data.success) {
+            showToast('연동이 해제되었습니다.', 'success');
+            setTimeout(() => navigate('profile'), 600);
+          }
+        })
+        .catch(error => showToast(error.message || '네트워크 오류가 발생했습니다.', 'error'));
+    });
+  }
+  function issueSsoCode() {
+    const result = document.getElementById('sso-code-result');
+    result.textContent = '발급 중...';
+    profileFetch('/api/v1/sso/link-codes', { method: 'POST' })
+      .then(data => {
+        if (data.success) {
+          result.textContent = data.data.code + '  (10분 유효)';
+          showToast('SSO 연동 코드가 발급되었습니다.', 'success');
+        } else {
+          result.textContent = '';
+          showToast(data.message || '연동 코드 발급에 실패했습니다.', 'error');
+        }
+      })
+      .catch(error => {
+        result.textContent = '';
+        showToast(error.message || '네트워크 오류가 발생했습니다.', 'error');
+      });
+  }
+  </script>
+  <!-- 실제 계정의 강제 변경 상태일 때만 모달을 자동으로 엽니다. -->
+  <script th:if="${currentUser?.user?.forcePasswordChange == true}">
+    setTimeout(function(){ if (document.getElementById('force-password-change-notice') && typeof openPasswordModal === 'function') openPasswordModal(); }, 250);
+  </script>
+
+</th:block>
+</body>
+</html>

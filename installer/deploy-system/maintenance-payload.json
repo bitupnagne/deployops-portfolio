@@ -1,0 +1,14 @@
+{"schema":1,"files":[
+{"source":"deploy-system/embedded-config.py","target":"/usr/local/deploy/bin/deployops-embedded-config.py","mode":488},
+{"source":"deploy-system/maintenance.py","target":"/usr/local/deploy/bin/deployops-maintenance.py","mode":488},
+{"source":"deploy-system/deployops-backup.sh","target":"/usr/local/deploy/bin/deployops-backup.sh","mode":488},
+{"source":"deploy-system/patch-deployops.sh","target":"/usr/local/deploy/bin/patch-deployops.sh","mode":488},
+{"source":"deploy-system/install-tls-keystore.py","target":"/usr/local/deploy/bin/deployops-tls.py","mode":488},
+{"source":"deploy-system/deployops-state.py","target":"/usr/local/deploy/bin/deployops-state.py","mode":488},
+{"source":"nexus-backup/nexus-local-backup-restore.py","target":"/usr/local/lib/deployops/nexus-backup/nexus-local-backup-restore.py","mode":384},
+{"source":"nexus-backup/nexus-isolated-restore-worker.py","target":"/usr/local/lib/deployops/nexus-backup/nexus-isolated-restore-worker.py","mode":384},
+{"source":"nexus-backup/nexus-promotion-worker.py","target":"/usr/local/lib/deployops/nexus-backup/nexus-promotion-worker.py","mode":384},
+{"source":"nexus-backup/nexus-backup-broker.py","target":"/usr/local/lib/deployops/nexus-backup/nexus-backup-broker.py","mode":384},
+{"source":"nexus-backup/deployops-nexus-backup.service","target":"/etc/systemd/system/deployops-nexus-backup.service","mode":420},
+{"source":"nexus-backup/deployops-nexus-backup.timer","target":"/etc/systemd/system/deployops-nexus-backup.timer","mode":420}
+]}

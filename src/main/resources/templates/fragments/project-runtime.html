@@ -1,0 +1,83 @@
+<!DOCTYPE html>
+<html xmlns:th="http://www.thymeleaf.org"><body>
+<div th:fragment="panel" id="tab-runtime" class="tab-panel section-card" role="tabpanel"
+     aria-labelledby="tabbtn-runtime" th:data-project-id="${project.id}">
+  <h3 class="section-title">런타임 설정</h3>
+  <p class="notice-box">저장한 설정은 즉시 서버에 적용되지 않습니다. 새로운 배포 요청에서 환경변수 리비전과 로그 저장 설정을 확인하고 승인한 뒤 적용합니다. 비밀 값은 다시 조회하거나 다운로드할 수 없습니다.</p>
+  <div class="form-grid">
+    <div class="form-group"><label class="form-label" for="runtime-environment">환경</label>
+      <select id="runtime-environment" data-runtime="environment" class="form-select" data-no-custom-select onchange="ProjectRuntime.changeEnvironment()">
+        <option value="TEST">TEST</option><option value="PROD">PROD</option>
+      </select>
+    </div>
+    <div class="form-group"><label class="form-label" for="runtime-component">배포 단위</label>
+      <select id="runtime-component" data-runtime="component" class="form-select" data-no-custom-select onchange="ProjectRuntime.changeComponent()">
+        <option value="0">프로젝트 기본 설정</option>
+        <option th:each="c : ${project.components}" th:if="${c.active and c.artifactType != null and c.artifactType.name() == 'CONTAINER'}"
+                th:value="${c.id}" th:text="${c.displayName + ' (' + c.code + ')'}">컨테이너</option>
+      </select>
+    </div>
+  </div>
+  <p class="form-hint">컴포넌트는 프로젝트 기본 설정을 상속하거나 별도 리비전을 선택할 수 있습니다. 적용하지 않음을 선택하면 상속도 해제합니다. 정적 파일·프록시는 컨테이너 런타임 설정 대상이 아닙니다.</p>
+  <p class="form-hint">로그 저장·임시 공간을 사용하려면 배포 단위에 숫자 형식의 비루트 UID:GID를 설정해 주세요. 환경변수는 Docker 관리자에게 조회될 수 있습니다. 상속을 선택하면 이 배포 단위의 로그·임시 공간 설정도 기본 설정을 따릅니다.</p>
+  <button class="btn btn-ghost" type="button" data-runtime="reload" onclick="ProjectRuntime.open()">최신 설정 불러오기 · 입력 초기화</button>
+  <p data-runtime="status" role="status" aria-live="polite">탭을 열면 설정을 불러옵니다.</p>
+  <div data-runtime="metadata"></div>
+  <fieldset data-runtime="editor" disabled hidden style="border:0;padding:0;min-width:0">
+    <h4>새 환경변수 리비전</h4>
+    <p class="form-hint">KEY=VALUE 형식으로 한 줄씩 입력해 주세요. 주석·export·중복 키는 사용할 수 없습니다. UTF-8 파일의 줄바꿈은 LF를 사용하세요. 서버에는 암호화해서 보관하며, 아래 저장은 기존 리비전을 변경하지 않습니다.</p>
+    <div class="form-group full"><label class="form-label" for="runtime-content">새 환경변수 내용</label>
+      <textarea id="runtime-content" data-runtime="content" class="form-textarea mono" rows="5" maxlength="65536" autocomplete="off" spellcheck="false" placeholder="KEY=VALUE"></textarea>
+    </div>
+    <div class="form-group"><label class="form-label" for="runtime-file">환경변수 파일 가져오기 (최대 64KiB)</label>
+      <input id="runtime-file" data-runtime="file" type="file" onchange="ProjectRuntime.uploadFile()">
+    </div>
+    <div class="form-group"><label class="form-label" for="runtime-revision-reason">리비전 저장 사유</label>
+      <textarea id="runtime-revision-reason" data-runtime="revision-reason" class="form-textarea" rows="2" maxlength="400"></textarea>
+    </div>
+    <button type="button" class="btn btn-primary" onclick="ProjectRuntime.saveRevision()">새 리비전 저장</button>
+    <h4>배포에 사용할 설정</h4>
+    <div class="form-grid">
+      <div class="form-group"><label class="form-label" for="runtime-mode">환경변수 적용 방식</label>
+        <select id="runtime-mode" data-runtime="mode" class="form-select" data-no-custom-select onchange="ProjectRuntime.changeMode()">
+          <option value="INHERIT">프로젝트 기본 설정 상속</option><option value="MANAGED_REVISION">저장된 리비전 선택</option><option value="NONE">환경변수 적용하지 않음</option>
+        </select>
+      </div>
+      <div class="form-group"><label class="form-label" for="runtime-revision">저장된 리비전</label>
+        <select id="runtime-revision" data-runtime="revision" class="form-select" data-no-custom-select><option value="">리비전을 선택해 주세요.</option></select>
+      </div>
+      <div class="form-group"><label for="runtime-persistent-logs"><input type="checkbox" id="runtime-persistent-logs" data-runtime="persistent-logs"> 파일 로그 유지 (/app/logs)</label></div>
+      <div class="form-group"><label class="form-label" for="runtime-stop-grace">종료 유예 시간 (초)</label>
+        <input id="runtime-stop-grace" data-runtime="stop-grace" class="form-input" type="number" min="1" max="300" step="1" value="30">
+        <p>기본 30초, 1~300초입니다. 해당 환경·배포 단위의 새 배포 요청과 서비스 정지·재기동에 사용합니다. 유예 시간이 지나면 강제 종료될 수 있습니다.</p>
+      </div>
+      <div class="form-group"><label class="form-label" for="runtime-tmp">임시 공간 (/tmp, MiB)</label>
+        <input id="runtime-tmp" data-runtime="tmp" class="form-input" type="number" min="0" max="512" step="1" value="0">
+        <p class="form-hint">0은 사용하지 않음, 사용 시 16~512MiB를 입력합니다.</p>
+      </div>
+      <div class="form-group full"><label class="form-label" for="runtime-binding-reason">설정 변경 사유</label>
+        <textarea id="runtime-binding-reason" data-runtime="binding-reason" class="form-textarea" rows="2" maxlength="400"></textarea>
+      </div>
+    </div>
+    <button type="button" class="btn btn-primary" onclick="ProjectRuntime.saveBinding()">배포 설정 저장</button>
+  </fieldset>
+  <h4>관리형 파일 로그</h4>
+  <p class="form-hint">선택한 서버의 demo-app.log를 읽습니다. 로그 유지 설정으로 배포된 컨테이너만 조회할 수 있으며, 로그에는 애플리케이션 데이터가 포함될 수 있습니다.</p>
+  <div class="form-grid">
+    <div class="form-group"><label class="form-label" for="runtime-log-server">로그 대상 서버</label>
+      <select id="runtime-log-server" data-runtime="server" class="form-select" data-no-custom-select><option value="">서버를 선택해 주세요.</option></select>
+      <select data-runtime="server-source" hidden aria-hidden="true" tabindex="-1" data-no-custom-select>
+        <optgroup th:each="g : ${project.serverGroups}" th:label="${g.name}">
+          <option th:each="s : ${g.servers}" th:value="${s.id}" th:data-environment="${g.environment.name()}" th:text="${s.name}">서버</option>
+        </optgroup>
+      </select>
+    </div>
+    <div class="form-group"><label class="form-label" for="runtime-log-lines">최근 로그 줄 수</label>
+      <input id="runtime-log-lines" data-runtime="lines" type="number" class="form-input" min="1" max="1000" step="1" value="200">
+    </div>
+  </div>
+  <button type="button" class="btn btn-ghost" data-runtime="read-logs" disabled onclick="ProjectRuntime.readLogs()">파일 로그 조회</button>
+  <p data-runtime="log-status" role="status" aria-live="polite">파일 로그 조회 권한을 확인한 뒤 사용할 수 있습니다.</p>
+  <pre data-runtime="log-text" style="white-space:pre-wrap;overflow-wrap:anywhere;max-height:400px;overflow:auto"></pre>
+</div>
+</body></html>

@@ -1,0 +1,906 @@
+<!DOCTYPE html>
+<html xmlns:th="http://www.thymeleaf.org">
+<body>
+<th:block th:fragment="content">
+
+  <div class="page-header">
+    <div>
+      <h1 class="page-title">새 배포 요청</h1>
+      <p class="page-desc">프로젝트, 환경, 배포 방식을 선택한 뒤 요청을 생성합니다.</p>
+    </div>
+  </div>
+
+  <div class="section-card" style="max-width:920px">
+    <h3 class="section-title">배포 정보 입력</h3>
+
+    <div class="notice-box warning" style="margin-bottom:20px">
+      <strong>운영 반영 원칙</strong> PROD는 TEST 확인을 마친 동일 이미지로 배포합니다. 새 이미지 빌드는 프로젝트 상세에서 MR을 승인·병합한 뒤 시작합니다.
+    </div>
+
+    <div class="form-grid">
+      <div class="form-group">
+        <label class="form-label" for="req-project">프로젝트 <span class="req">*</span></label>
+        <select class="form-select" id="req-project">
+          <option value="">프로젝트를 선택해 주세요.</option>
+          <option th:each="p : ${projects}" th:value="${p.id}" th:text="${p.name}"
+                  th:data-permitted-environments="${#strings.listJoin(requestEnvironments[p.id], ',')}"
+                  th:data-image-repository="${p.imageRepository}"
+                  th:data-test-was="${requestTargetCounts?.get(p.id)?.get('TEST_WAS_ONLY') ?: 0}"
+                  th:data-test-web="${requestTargetCounts?.get(p.id)?.get('TEST_WEB_ONLY') ?: 0}"
+                  th:data-prod-was="${requestTargetCounts?.get(p.id)?.get('PROD_WAS_ONLY') ?: 0}"
+                  th:data-prod-web="${requestTargetCounts?.get(p.id)?.get('PROD_WEB_ONLY') ?: 0}">project</option>
+        </select>
+      </div>
+      <div class="form-group">
+        <label class="form-label" for="req-env">배포 환경 <span class="req">*</span></label>
+        <select class="form-select" id="req-env" data-no-custom-select>
+          <option value="">환경을 선택해 주세요.</option>
+          <option value="TEST">TEST</option>
+          <option value="PROD">PROD</option>
+        </select>
+      </div>
+    </div>
+
+    <fieldset class="section-card" style="margin-top:20px">
+      <legend class="form-label">배포 대상 서버 그룹</legend>
+      <p class="form-hint">이 프로젝트와 환경에 연결된 그룹 중 이번 요청에 반영할 그룹을 선택하세요. 승인 후 대상은 고정됩니다.</p>
+      <p id="req-groups-empty" class="form-hint">프로젝트와 환경을 먼저 선택해 주세요.</p>
+      <div id="req-groups">
+        <th:block th:each="entry : ${requestGroups}">
+          <label th:each="group : ${entry.value}" class="request-group-option"
+                 style="display:none;gap:8px;align-items:center;padding:8px 0"
+                 th:attr="data-project=${entry.key},data-environment=${group.environment}">
+            <input type="checkbox" name="request-group" th:value="${group.id}"
+                   th:attr="data-was=${#lists.size(group.servers.?[serverType?.name() == 'WAS'])},
+                            data-web=${#lists.size(group.servers.?[serverType?.name() == 'WEB'])},
+                            data-failure-policy=${group.failurePolicy},
+                            data-additional-approval=${group.approvalPolicyId != null}">
+            <span th:text="${group.name}">운영 그룹</span>
+            <span th:if="${group.approvalPolicyId != null}" class="env-badge">추가 승인 필요</span>
+            <span class="badge" th:if="${group.wasVipEnabled == true}" th:text="${'외부 VIP ' + group.wasVipAddress + ' · 개별 L4 제외 없음 · 무중단 미보장'}"></span>
+            <span class="form-hint" th:text="${group.minAvailable == 0 ? '중단 허용' : '역할별 최소 가용 ' + group.minAvailable + '대'}">정책</span>
+            <span class="form-hint" th:text="${group.failurePolicy?.name() == 'ROLLBACK' ? '실패 시 그룹 복구 · 수동 전략 사용 불가' : '실패 시 중단'}">실패 정책</span>
+          </label>
+        </th:block>
+      </div>
+      <p id="req-group-approval-hint" class="form-hint" role="status" hidden>선택한 그룹에 추가 승인 정책이 있습니다. TEST 배포도 수동 승인이 필요하며, 프로젝트 승인 정책을 먼저 거친 뒤 그룹 ID 순서대로 추가 승인합니다. 정책 상세는 서버 그룹 화면에서 확인하세요.</p>
+    </fieldset>
+
+    <div style="margin-top:20px">
+      <label class="form-label">배포 방식 <span class="req">*</span></label>
+      <div class="form-grid deploy-mode-grid" style="margin-top:8px">
+        <label class="section-card" style="margin:0;cursor:pointer;border-width:2px" id="mode-build-card">
+          <div style="display:flex;gap:12px;align-items:flex-start">
+            <input type="radio" name="deploy-mode" value="BUILD_AND_DEPLOY" disabled style="margin-top:4px">
+            <div>
+              <strong>새 이미지 빌드</strong>
+              <p class="form-hint" style="margin-top:8px">승인·병합한 MR의 결과 커밋을 빌드합니다. 프로젝트 상세의 MR 화면에서 시작하세요.</p>
+            </div>
+          </div>
+        </label>
+        <label class="section-card" style="margin:0;cursor:pointer;border-width:2px" id="mode-image-card">
+          <div style="display:flex;gap:12px;align-items:flex-start">
+            <input type="radio" name="deploy-mode" value="IMAGE_ONLY" checked>
+            <div>
+              <strong>기존 이미지로 배포</strong>
+              <p class="form-hint" style="margin-top:8px">이미 만들어져 있는 이미지를 그대로 내보냅니다. TEST 에서 확인한 것을 운영에 올릴 때, 또는 예전 것으로 되돌릴 때 씁니다.</p>
+            </div>
+          </div>
+        </label>
+      </div>
+      <p class="form-hint" id="mode-hint" style="margin-top:8px;color:var(--muted)">이 화면에서는 기존 이미지를 배포합니다. 새 빌드는 MR 승인·병합 화면에서 진행합니다.</p>
+      <button class="btn btn-ghost" type="button" style="margin-top:8px" onclick="openProjectMergeRequests()">프로젝트 MR 화면으로 이동</button>
+    </div>
+
+    <div class="section-card" id="build-mode-section" style="margin-top:20px;background:var(--bg);border-style:dashed">
+      <p class="section-title" style="margin-bottom:8px">새로 빌드 후 배포</p>
+      <p class="form-hint" style="margin-bottom:16px">브랜치 목록은 GitLab에서 불러옵니다. 선택한 브랜치로 파이프라인을 실행하고 이미지를 생성합니다.</p>
+
+      <div class="form-grid">
+        <div class="form-group full">
+          <label class="form-label" for="req-branch-select">GitLab 브랜치 또는 태그 <span class="req">*</span></label>
+          <div class="field-actions">
+            <select class="form-select" id="req-branch-select" style="flex:1">
+              <option value="">브랜치 또는 태그를 선택해 주세요.</option>
+            </select>
+            <button class="btn btn-ghost" type="button" onclick="refreshBranches()">새로고침</button>
+          </div>
+          <p class="form-hint" id="branch-select-hint" style="color:var(--muted)">프로젝트를 선택하면 GitLab 브랜치 목록을 조회합니다.</p>
+        </div>
+      </div>
+    </div>
+
+    <div class="section-card" id="image-mode-section" style="margin-top:20px;background:var(--bg);border-style:dashed;display:none">
+      <p class="section-title" style="margin-bottom:8px">기존 이미지로 배포</p>
+      <p class="form-hint" style="margin-bottom:16px">
+        이미 빌드되어 저장소에 올라가 있는 이미지 중에서 고릅니다.
+        고르면 이미지 지문(digest)까지 자동으로 채워, 같은 태그가 나중에 바뀌어도 늘 같은 것이 나갑니다.
+      </p>
+
+      <div class="form-grid">
+        <div class="form-group full">
+          <label class="form-label" for="req-image-tag-select">배포할 이미지 <span class="req">*</span></label>
+          <div class="field-actions">
+            <select class="form-select" id="req-image-tag-select" style="flex:1">
+              <option value="">이미지 태그를 선택해 주세요.</option>
+            </select>
+            <button class="btn btn-ghost" id="image-search-btn" type="button" onclick="refreshImageTags()">검색</button>
+            <button class="btn btn-ghost" id="image-digest-btn" type="button" onclick="resolveImageDigest()">Digest 조회</button>
+          </div>
+          <p class="form-hint" id="image-tag-select-hint" style="color:var(--muted)">프로젝트를 고르면 올라와 있는 이미지를 불러옵니다.</p>
+          <p class="form-hint" style="margin-top:2px">
+            이름은 <span class="mono">브랜치-커밋-빌드번호</span> 순입니다. 뒤에 붙은 커밋 제목으로 찾으세요.
+          </p>
+          <!-- 이미지가 하나도 없을 때 그 이유를 여기에 띄운다.
+               "없습니다" 한 줄로는 빌드 중인지 깨졌는지 알 수 없어 여기서 멈추게 된다. -->
+          <div id="image-why" class="img-why" style="display:none"></div>
+        </div>
+        <!-- 위에서 고르면 자동으로 채워지는 값이다. 목록이 안 뜰 때만 손으로 넣으라고 접어 둔다 —
+             펼쳐 두면 "여기도 채워야 하나" 싶어 멈추게 된다. -->
+        <details class="cfg-adv form-group full">
+          <summary>
+            <span class="cfg-adv-t">직접 입력</span>
+            <span class="cfg-adv-s">목록에서 고르면 자동으로 채워집니다 · 목록이 안 뜰 때만 쓰세요</span>
+          </summary>
+          <div class="form-grid">
+        <div class="form-group">
+          <label class="form-label" for="req-image-tag">이미지 태그</label>
+          <input class="form-input mono" id="req-image-tag" placeholder="예: main-d5b38afa-4">
+        </div>
+        <div class="form-group">
+          <label class="form-label" for="req-image-digest">이미지 지문 (digest)</label>
+          <input class="form-input mono" id="req-image-digest" placeholder="예: sha256:...">
+        </div>
+          </div>
+        </details>
+      </div>
+    </div>
+
+    <!-- 배포 범위·순서는 기본값으로 요청하는 경우가 많아 접어 둔다.
+         프로젝트와 배포 환경에 매핑된 서버 역할을 나누거나 여러 서버의 실행 순서를 조정할 때 펼친다. -->
+    <details class="cfg-adv" style="margin-top:20px">
+      <summary>
+        <span class="cfg-adv-t">배포 범위와 순서</span>
+        <span class="cfg-adv-s">기본은 환경 내 전체 대상 · WAS/WEB 범위를 나누거나 여러 서버의 실행 순서를 조정할 때 펼치세요</span>
+      </summary>
+      <div class="form-grid">
+        <div class="form-group">
+          <label class="form-label" for="req-scope">배포 범위</label>
+          <select class="form-select" id="req-scope">
+            <option value="ALL" selected>환경 내 전체 매핑 대상</option>
+            <option value="WAS_ONLY">WAS만 (API)</option>
+            <option value="WEB_ONLY">WEB만</option>
+          </select>
+          <p class="form-hint" style="color:var(--muted)">선택한 프로젝트와 배포 환경에 등록된 WAS·WEB 서버 대상을 모두 포함합니다.</p>
+        </div>
+        <div class="form-group">
+          <label class="form-label" for="req-strategy">배포 전략</label>
+          <select class="form-select" id="req-strategy">
+            <option value="SAFE" selected>순차 — 그룹 안에서 앱 서버 먼저, 그다음 웹 서버</option>
+            <option value="WAVE">호기별 — 그룹 안에서 같은 순번의 앱·웹 서버 순서로</option>
+            <option value="MANUAL">수동 — 운영자가 서버 하나씩 직접 실행</option>
+          </select>
+          <p class="form-hint" style="color:var(--muted)">
+            교체 순서와 그룹의 가용성 정책을 함께 적용합니다. 순서 선택만으로 무중단이 보장되지는 않습니다.
+            수동 전략은 실패 시 중단(STOP) 그룹에서만 사용할 수 있습니다. 그룹 자동 복구(ROLLBACK)는 순차·호기별 전략을 사용하세요.
+          </p>
+          <p id="req-strategy-warning" class="form-hint" role="alert" hidden>선택한 그룹에 자동 복구(ROLLBACK) 정책이 있어 수동 전략으로 요청할 수 없습니다.</p>
+        </div>
+      </div>
+    </details>
+
+    <section class="section-card" style="margin-top:20px" aria-labelledby="release-manifest-heading">
+      <h3 class="section-title" id="release-manifest-heading">배포 단위별 산출물</h3>
+      <p class="form-hint" id="release-manifest-hint" role="status">프로젝트와 환경을 선택해 주세요.</p>
+      <div id="release-manifest-fields"></div>
+    </section>
+
+    <div class="form-grid" style="margin-top:20px">
+      <div class="form-group full">
+        <label class="form-label" for="req-reason">배포 사유 <span class="req">*</span></label>
+        <textarea class="form-textarea" id="req-reason" rows="4"
+                  placeholder="배포 목적, 변경 내용, 영향 범위를 10자 이상으로 입력해 주세요."></textarea>
+      </div>
+    </div>
+
+    <div class="modal-footer" style="padding:0;margin-top:24px;border:0">
+      <button class="btn btn-ghost" data-page="requests">취소</button>
+      <p id="req-target-warning" class="form-hint" role="status" hidden></p>
+      <button id="req-target-settings" type="button" class="btn btn-outline" hidden
+              onclick="navigate('project-detail', projectSelect.value)">프로젝트 서버 그룹 매핑 확인</button>
+      <button id="req-submit" class="btn btn-primary" onclick="submitDeployRequest()">배포 요청 생성</button>
+    </div>
+  </div>
+
+  <script>
+  var projectSelect = document.getElementById('req-project');
+  var envSelect = document.getElementById('req-env');
+  var branchSelect = document.getElementById('req-branch-select');
+  var imageTagSelect = document.getElementById('req-image-tag-select');
+  var imageTagInput = document.getElementById('req-image-tag');
+  var imageDigestInput = document.getElementById('req-image-digest');
+  var requireTestFirst = true;
+  var imageLoadGeneration = 0;
+  var digestLoadGeneration = 0;
+  var releaseComponents = [];
+  var releaseComponentGeneration = 0;
+  var releaseComponentsReady = false;
+
+  function releaseComponentContext() {
+    return { generation: releaseComponentGeneration, projectId: projectSelect.value,
+      environment: envSelect.value, scope: document.getElementById('req-scope')?.value || '',
+      mode: currentMode() };
+  }
+
+  function isCurrentReleaseComponentContext(context) {
+    const current = releaseComponentContext();
+    return context.generation === current.generation && context.projectId === current.projectId
+      && context.environment === current.environment && context.scope === current.scope
+      && context.mode === current.mode;
+  }
+
+  function refreshReleaseComponents() {
+    ++releaseComponentGeneration;
+    const context = releaseComponentContext();
+    releaseComponents = [];
+    releaseComponentsReady = false;
+    const container = document.getElementById('release-manifest-fields');
+    const hint = document.getElementById('release-manifest-hint');
+    container.replaceChildren();
+    if (!context.projectId || !['TEST', 'PROD'].includes(context.environment)
+        || !['ALL', 'WAS_ONLY', 'WEB_ONLY'].includes(context.scope)) {
+      hint.textContent = '프로젝트, 환경과 배포 범위를 선택해 주세요.';
+      return;
+    }
+    if (context.environment === 'PROD') {
+      releaseComponentsReady = true;
+      renderPromotionManifest();
+      return;
+    }
+    hint.textContent = '배포 단위를 불러오는 중입니다.';
+    const query = new URLSearchParams({ environment: context.environment, scope: context.scope });
+    fetch('/api/v1/projects/' + encodeURIComponent(context.projectId) + '/request-components?' + query,
+      { cache: 'no-store' })
+      .then(async response => {
+        const result = await response.json();
+        if (!response.ok) throw new Error(result.message || '배포 단위 조회 실패');
+        return result;
+      }).then(result => {
+        if (!isCurrentReleaseComponentContext(context)) return;
+        if (!result.success || !Array.isArray(result.data)) throw new Error(result.message || '배포 단위 조회 실패');
+        const scope = context.scope;
+        releaseComponents = result.data.filter(component => component.active && component.artifactType !== 'PROXY_RELOAD'
+          && (scope === 'ALL' || (scope === 'WAS_ONLY' && component.role === 'WAS')
+            || (scope === 'WEB_ONLY' && component.role === 'WEB')));
+        releaseComponentsReady = true;
+        const primaryRepository = projectSelect.selectedOptions[0]?.dataset.imageRepository || '';
+        const explicit = releaseComponents.length > 1 || releaseComponents.some(component =>
+          component.imageRepository && component.imageRepository !== primaryRepository);
+        if (context.mode === 'BUILD_AND_DEPLOY') {
+          hint.textContent = 'MR 승인·병합 후 CI가 선택한 배포 단위의 이미지를 빌드하고 다이제스트를 검증해 하나의 릴리스로 확정합니다. 빌드 전 다이제스트를 수동 입력하지 않습니다.';
+          return;
+        }
+        hint.textContent = explicit
+          ? '선택한 범위의 배포 단위별 이미지 태그와 sha256 다이제스트를 입력하세요. TEST 확인 후 같은 묶음만 운영으로 승격됩니다.'
+          : '이 프로젝트는 위에서 선택한 단일 이미지로 배포합니다.';
+        if (!explicit) return;
+        releaseComponents.forEach(component => {
+          const fieldset = document.createElement('fieldset');
+          fieldset.className = 'section-card';
+          fieldset.style.marginTop = '12px';
+          fieldset.dataset.componentId = String(component.id);
+          fieldset.dataset.componentCode = component.code;
+          const legend = document.createElement('legend');
+          legend.textContent = component.displayName || component.code;
+          fieldset.append(legend);
+          const repository = document.createElement('p');
+          repository.className = 'form-hint mono';
+          repository.textContent = component.imageRepository || primaryRepository;
+          fieldset.append(repository);
+          [{key: 'tag', title: '이미지 태그', placeholder: 'release-1'},
+            {key: 'digest', title: '고정 다이제스트', placeholder: 'sha256:…'}].forEach(({key, title, placeholder}) => {
+            const label = document.createElement('label');
+            label.className = 'form-label';
+            label.htmlFor = 'release-component-' + component.id + '-' + key;
+            label.textContent = title;
+            const input = document.createElement('input');
+            input.id = label.htmlFor;
+            input.className = 'form-input mono';
+            input.dataset.releaseField = key;
+            input.placeholder = placeholder;
+            input.autocomplete = 'off';
+            fieldset.append(label, input);
+          });
+          container.append(fieldset);
+        });
+      }).catch(error => {
+        if (isCurrentReleaseComponentContext(context)) {
+          releaseComponentsReady = false;
+          hint.textContent = '배포 단위를 확인하지 못했습니다. 프로젝트를 다시 선택해 주세요. ' + error.message;
+        }
+      });
+  }
+
+  function renderPromotionManifest() {
+    if (envSelect.value !== 'PROD') return;
+    const container = document.getElementById('release-manifest-fields');
+    container.replaceChildren();
+    const selected = imageTagSelect.selectedOptions[0];
+    const option = selected && selected.value && selected.value === imageTagInput.value ? selected : null;
+    const hint = document.getElementById('release-manifest-hint');
+    hint.textContent = option?.dataset.sourceId
+      ? '선택한 TEST 요청의 산출물을 서버에서 그대로 복사합니다. 운영에서 개별 이미지를 바꾸려면 새 TEST 검증이 필요합니다.'
+      : '승격할 TEST 확인 요청을 선택해 주세요.';
+    let items = [];
+    try { items = JSON.parse(option?.dataset.componentImages || '[]'); } catch (_) { return; }
+    items.forEach(item => {
+      const row = document.createElement('p');
+      row.className = 'form-hint mono';
+      row.style.overflowWrap = 'anywhere';
+      row.textContent = (item.componentCode || item.componentId) + ' · ' + (item.imageTag || '-') + ' · ' + (item.imageDigest || '구 산출물: 새 TEST 검증 필요');
+      container.append(row);
+    });
+  }
+
+  function collectReleaseComponents() {
+    if (!releaseComponentsReady) throw new Error('배포 단위 조회가 완료된 뒤 요청해 주세요.');
+    if (envSelect.value === 'PROD') return null;
+    if (currentMode() === 'BUILD_AND_DEPLOY') return [];
+    return Array.from(document.querySelectorAll('#release-manifest-fields fieldset')).map(fieldset => {
+      const tag = fieldset.querySelector('[data-release-field="tag"]').value.trim();
+      const digest = fieldset.querySelector('[data-release-field="digest"]').value.trim();
+      if (!/^sha256:[0-9a-f]{64}$/.test(digest)) throw new Error(fieldset.dataset.componentCode + '의 sha256 다이제스트를 입력해 주세요.');
+      return { componentId: Number(fieldset.dataset.componentId), componentCode: fieldset.dataset.componentCode,
+        imageTag: tag || null, imageDigest: digest };
+    });
+  }
+
+  function imageLoadContext() {
+    return { generation: imageLoadGeneration, projectId: projectSelect.value,
+      environment: envSelect.value, mode: currentMode(), requireTestFirst };
+  }
+
+  function isCurrentImageLoad(context) {
+    return context.generation === imageLoadGeneration
+      && context.projectId === projectSelect.value
+      && context.environment === envSelect.value
+      && context.mode === currentMode()
+      && context.requireTestFirst === requireTestFirst;
+  }
+
+  function beginImageLoad() {
+    imageLoadGeneration += 1;
+    digestLoadGeneration += 1;
+    imageTagInput.value = '';
+    imageDigestInput.value = '';
+    const why = document.getElementById('image-why');
+    if (why) { why.style.display = 'none'; why.innerHTML = ''; }
+    return imageLoadContext();
+  }
+
+  function requestImageUrl(projectId, resource, context, parameters = {}) {
+    if (!projectId || String(projectId) !== String(context.projectId)
+        || !['TEST', 'PROD'].includes(context.environment)) return null;
+    const query = new URLSearchParams({ ...parameters, environment: context.environment });
+    return '/api/v1/nexus/request-projects/' + encodeURIComponent(projectId) + '/' + resource + '?' + query;
+  }
+
+  projectSelect.addEventListener('change', handleProjectChange);
+  envSelect.addEventListener('change', syncModeState);
+  branchSelect.addEventListener('change', syncBranchHint);
+  imageTagSelect.addEventListener('change', applySelectedImageTag);
+  imageTagInput.addEventListener('input', () => {
+    digestLoadGeneration += 1;
+    imageDigestInput.value = '';
+  });
+  document.querySelectorAll('input[name="deploy-mode"]').forEach(radio => {
+    radio.addEventListener('change', syncModeState);
+  });
+
+  fetch('/api/v1/deploy-requests/execution-policy')
+    .then(response => response.json())
+    .then(data => {
+      if (data.success && data.data) requireTestFirst = data.data.requireTestFirst !== false;
+      syncModeState();
+    })
+    .catch(() => syncModeState());
+
+  function effectiveRequestTargetCount(dataset, environment, scope) {
+    if (!dataset || !['TEST', 'PROD'].includes(environment)) return null;
+    const prefix = environment === 'PROD' ? 'prod' : 'test';
+    const was = Number(dataset[prefix + 'Was']);
+    const web = Number(dataset[prefix + 'Web']);
+    if (!Number.isInteger(was) || !Number.isInteger(web) || was < 0 || web < 0) return 0;
+    return scope === 'WAS_ONLY' ? was : scope === 'WEB_ONLY' ? web : was + web;
+  }
+
+  function syncTargetAvailability() {
+    const selected = projectSelect.selectedOptions[0];
+    let count = projectSelect.value ? effectiveRequestTargetCount(selected?.dataset,
+      envSelect.value, document.getElementById('req-scope')?.value || 'ALL') : null;
+    syncRequestGroups();
+    if (projectSelect.value && envSelect.value) {
+      const scope = document.getElementById('req-scope')?.value || 'ALL';
+      count = Array.from(document.querySelectorAll('#req-groups input:checked'))
+        .filter(input => !input.disabled).reduce((sum, input) =>
+          sum + (scope === 'WEB_ONLY' ? 0 : Number(input.dataset.was))
+              + (scope === 'WAS_ONLY' ? 0 : Number(input.dataset.web)), 0);
+    }
+    const warning = document.getElementById('req-target-warning');
+    warning.hidden = count !== 0;
+    document.getElementById('req-target-settings').hidden = count !== 0;
+    warning.textContent = count === 0
+      ? envSelect.value + ' 환경의 선택한 배포 범위에 대상 서버가 없습니다. 프로젝트 서버 그룹 매핑을 확인해 주세요.' : '';
+    const unsupportedManual = document.getElementById('req-strategy')?.value === 'MANUAL'
+      && Array.from(document.querySelectorAll('#req-groups input:checked'))
+        .some(input => !input.disabled && input.dataset.failurePolicy === 'ROLLBACK');
+    document.getElementById('req-strategy-warning').hidden = !unsupportedManual;
+    document.getElementById('req-group-approval-hint').hidden =
+      !Array.from(document.querySelectorAll('#req-groups input:checked'))
+        .some(input => !input.disabled && input.dataset.additionalApproval === 'true');
+    document.getElementById('req-submit').disabled = count === 0 || unsupportedManual;
+    return count;
+  }
+  function syncRequestGroups() {
+    const context = projectSelect.value + ':' + envSelect.value;
+    const container = document.getElementById('req-groups');
+    const changed = container.dataset.context !== context;
+    let available = 0;
+    container.querySelectorAll('.request-group-option').forEach(label => {
+      const visible = label.dataset.project === projectSelect.value && label.dataset.environment === envSelect.value;
+      label.style.display = visible ? 'flex' : 'none';
+      const input = label.querySelector('input');
+      input.disabled = !visible;
+      if (changed) input.checked = visible;
+      if (visible) available++;
+    });
+    container.dataset.context = context;
+    document.getElementById('req-groups-empty').hidden = available > 0;
+  }
+  document.getElementById('req-groups').addEventListener('change', syncTargetAvailability);
+  document.getElementById('req-strategy').addEventListener('change', syncTargetAvailability);
+  projectSelect.addEventListener('change', syncTargetAvailability);
+  envSelect.addEventListener('change', syncTargetAvailability);
+  document.getElementById('req-scope').addEventListener('change', syncTargetAvailability);
+  document.getElementById('req-scope').addEventListener('change', refreshReleaseComponents);
+  syncTargetAvailability();
+
+  function currentMode() {
+    return document.querySelector('input[name="deploy-mode"]:checked')?.value || 'IMAGE_ONLY';
+  }
+
+  function openProjectMergeRequests() {
+    if (!projectSelect.value) {
+      showToast('먼저 프로젝트를 선택해 주세요.', 'error');
+      return;
+    }
+    navigate('project-detail', projectSelect.value);
+  }
+
+  function handleProjectChange() {
+    const projectId = projectSelect.value;
+    resetBranchOptions('프로젝트를 선택하면 GitLab 브랜치 목록을 조회합니다.');
+    resetImageTagOptions('프로젝트를 고르면 올라와 있는 이미지를 불러옵니다.');
+    syncModeState();
+  }
+
+  function syncRequestEnvironmentPermissions() {
+    const selected = projectSelect.options[projectSelect.selectedIndex];
+    const permitted = (selected?.dataset.permittedEnvironments || '').split(',').filter(Boolean);
+    Array.from(envSelect.options).forEach(option => {
+      if (option.value) option.disabled = !permitted.includes(option.value);
+    });
+    if (!permitted.includes(envSelect.value)) envSelect.value = permitted.length === 1 ? permitted[0] : '';
+  }
+
+  function syncModeState() {
+    syncRequestEnvironmentPermissions();
+    beginImageLoad();
+    refreshReleaseComponents();
+    resetImageTagOptions('프로젝트와 환경에 맞는 이미지를 선택해 주세요.');
+    const environment = envSelect.value;
+    const buildRadio = document.querySelector('input[name="deploy-mode"][value="BUILD_AND_DEPLOY"]');
+    const imageRadio = document.querySelector('input[name="deploy-mode"][value="IMAGE_ONLY"]');
+    const buildSection = document.getElementById('build-mode-section');
+    const imageSection = document.getElementById('image-mode-section');
+    const modeHint = document.getElementById('mode-hint');
+
+    if (environment === 'PROD') {
+      buildRadio.checked = false;
+      buildRadio.disabled = true;
+      imageRadio.checked = true;
+      modeHint.textContent = requireTestFirst
+        ? 'PROD는 TEST 확인을 마친 요청의 동일한 이미지로 배포합니다.'
+        : 'PROD는 저장소의 기존 이미지로만 배포합니다.';
+      modeHint.style.color = 'var(--warning)';
+    } else {
+      buildRadio.checked = false;
+      buildRadio.disabled = true;
+      imageRadio.checked = true;
+      modeHint.textContent = '이 화면에서는 기존 이미지를 배포합니다. 새 빌드는 MR 승인·병합 화면에서 진행합니다.';
+      modeHint.style.color = 'var(--muted)';
+    }
+
+    if (projectSelect.value) {
+      loadImagesForEnvironment(projectSelect.value);
+    }
+
+    const isBuildMode = currentMode() === 'BUILD_AND_DEPLOY';
+    buildSection.style.display = isBuildMode ? '' : 'none';
+    imageSection.style.display = isBuildMode ? 'none' : '';
+    document.getElementById('mode-build-card').style.borderColor = isBuildMode ? 'var(--primary)' : 'var(--line)';
+    document.getElementById('mode-image-card').style.borderColor = isBuildMode ? 'var(--line)' : 'var(--primary)';
+  }
+
+  function loadImagesForEnvironment(projectId) {
+    if (envSelect.value === 'PROD' && requireTestFirst) {
+      loadPromotionSources(projectId);
+    } else {
+      loadImageTags(projectId);
+    }
+  }
+
+  function loadPromotionSources(projectId) {
+    const context = beginImageLoad();
+    const hint = document.getElementById('image-tag-select-hint');
+    imageTagSelect.innerHTML = '<option value="">불러오는 중...</option>';
+    hint.textContent = 'TEST 확인 완료 산출물을 조회하는 중입니다.';
+    fetch(`/api/v1/deploy-requests/promotion-sources?projectId=${encodeURIComponent(projectId)}`)
+      .then(response => response.json())
+      .then(data => {
+        if (!isCurrentImageLoad(context)) return;
+        imageTagSelect.innerHTML = '<option value="">TEST 확인 완료 요청을 선택해 주세요.</option>';
+        if (!data.success || !Array.isArray(data.data) || data.data.length === 0) {
+          hint.textContent = data.message || '승격 가능한 TEST 확인 완료 요청이 없습니다.';
+          hint.style.color = 'var(--warning)';
+          return;
+        }
+        data.data.forEach(source => {
+          const option = document.createElement('option');
+          option.value = source.imageTag || '';
+          option.dataset.sourceId = source.id;
+          option.dataset.digest = source.imageDigest || '';
+          option.dataset.componentImages = JSON.stringify(source.componentImages || []);
+          option.dataset.commitTitle = source.commitSha || '';
+          option.textContent = `${source.reqNo} · ${source.imageTag} · ${(source.commitSha || '').slice(0, 8)}`;
+          imageTagSelect.appendChild(option);
+        });
+        hint.textContent = '실제로 TEST 확인을 마친 요청의 동일한 이미지가 PROD에 배포됩니다.';
+        hint.style.color = 'var(--success)';
+      })
+      .catch(() => {
+        if (isCurrentImageLoad(context)) resetImageTagOptions('TEST 확인 완료 요청을 불러오지 못했습니다.');
+      });
+  }
+
+  function loadBranches(deployProjectId) {
+    const hint = document.getElementById('branch-select-hint');
+    branchSelect.innerHTML = '<option value="">불러오는 중...</option>';
+    hint.textContent = 'GitLab 브랜치 목록을 조회하는 중입니다.';
+    hint.style.color = 'var(--muted)';
+
+    fetch(`/api/v1/gitlab/deploy-projects/${deployProjectId}/branches`)
+      .then(response => response.json())
+      .then(data => {
+        if (data.success && Array.isArray(data.data) && data.data.length > 0) {
+          branchSelect.innerHTML = '<option value="">브랜치 또는 태그를 선택해 주세요.</option>';
+          data.data.forEach(branch => {
+            const option = document.createElement('option');
+            option.value = branch.name;
+            option.textContent = branch.name
+              + (branch.isDefault ? ' (기본)' : '')
+              + (branch.isProtected ? ' 보호' : '');
+            option.dataset.commitSha = branch.commitSha || '';
+            option.dataset.commitTitle = branch.commitTitle || '';
+            if (branch.isDefault) {
+              option.selected = true;
+            }
+            branchSelect.appendChild(option);
+          });
+          syncBranchHint();
+          return;
+        }
+        resetBranchOptions(data.message || '브랜치 목록을 불러오지 못했습니다.');
+      })
+      .catch(() => resetBranchOptions('브랜치 목록을 불러오지 못했습니다.'));
+  }
+
+  function refreshBranches() {
+    if (projectSelect.value) {
+      loadBranches(projectSelect.value);
+    }
+  }
+
+  function syncBranchHint() {
+    const hint = document.getElementById('branch-select-hint');
+    const option = branchSelect.selectedOptions[0];
+    if (!option || !option.value) {
+      hint.textContent = '브랜치 또는 태그를 선택해 주세요.';
+      hint.style.color = 'var(--muted)';
+      return;
+    }
+    const extra = option.dataset.commitTitle ? ` / ${option.dataset.commitTitle}` : '';
+    hint.textContent = `${option.value}${extra}`;
+    hint.style.color = 'var(--success)';
+  }
+
+  function resetBranchOptions(message) {
+    branchSelect.innerHTML = '<option value="">브랜치 또는 태그를 선택해 주세요.</option>';
+    const hint = document.getElementById('branch-select-hint');
+    hint.textContent = message;
+    hint.style.color = 'var(--muted)';
+  }
+
+  function loadImageTags(projectId) {
+    const context = beginImageLoad();
+    const url = requestImageUrl(projectId, 'docker-tags', context);
+    if (!url) { resetImageTagOptions('프로젝트와 배포 환경을 선택해 주세요.'); return; }
+    const hint = document.getElementById('image-tag-select-hint');
+    imageTagSelect.innerHTML = '<option value="">불러오는 중...</option>';
+    hint.textContent = 'Nexus 이미지 태그 목록을 조회하는 중입니다.';
+    hint.style.color = 'var(--muted)';
+
+    fetch(url, { cache: 'no-store' })
+      .then(response => response.json())
+      .then(data => {
+        if (!isCurrentImageLoad(context)) return;
+        if (data.success && Array.isArray(data.data) && data.data.length > 0) {
+          imageTagSelect.innerHTML = '<option value="">이미지 태그를 선택해 주세요.</option>';
+          data.data.forEach(item => {
+            // 서버는 {tag, createdAt, commitTitle} 객체 배열(생성일 최신순)을 반환한다.
+            const tag = (item && typeof item === 'object') ? item.tag : item;
+            const createdAt = (item && typeof item === 'object') ? item.createdAt : '';
+            const commitTitle = (item && typeof item === 'object') ? item.commitTitle : '';
+            const option = document.createElement('option');
+            option.value = tag;
+            let label = tag;
+            const dateText = formatImageDate(createdAt);
+            if (dateText) label += '  ·  ' + dateText;
+            if (commitTitle) label += '  ·  ' + commitTitle;
+            option.textContent = label;
+            option.dataset.createdAt = createdAt || '';
+            option.dataset.commitTitle = commitTitle || '';
+            imageTagSelect.appendChild(option);
+          });
+          hint.textContent = '';
+          hint.style.color = 'var(--success)';
+          return;
+        }
+        resetImageTagOptions(data.message || '배포할 수 있는 이미지가 없습니다.');
+        explainNoImages(projectId, context);   // 왜 없는지는 서버가 알아봐 준다
+      })
+      .catch(() => {
+        if (isCurrentImageLoad(context)) resetImageTagOptions('이미지 목록을 불러오지 못했습니다.');
+      });
+  }
+
+  function refreshImageTags() {
+    if (projectSelect.value) {
+      loadImagesForEnvironment(projectSelect.value);
+    }
+  }
+
+  function formatImageDate(value) {
+    if (!value) return '';
+    const d = new Date(value);
+    if (isNaN(d.getTime())) return '';
+    const p = n => String(n).padStart(2, '0');
+    return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`;
+  }
+
+  function applySelectedImageTag() {
+    const option = imageTagSelect.selectedOptions[0];
+    digestLoadGeneration += 1;
+    imageTagInput.value = '';
+    imageDigestInput.value = '';
+    if (!option || !option.value) {
+      renderPromotionManifest();
+      return;
+    }
+    imageTagInput.value = option.value;
+    if (option.dataset.sourceId) {
+      imageDigestInput.value = option.dataset.digest || '';
+      renderPromotionManifest();
+      return;
+    }
+    resolveImageDigest();
+  }
+
+  function selectedImageContext() {
+    const option = imageTagSelect.selectedOptions[0];
+    if (!option || !option.value) return '';
+    const parts = [];
+    const dateText = formatImageDate(option.dataset.createdAt);
+    if (dateText) parts.push(`생성 ${dateText}`);
+    if (option.dataset.commitTitle) parts.push(option.dataset.commitTitle);
+    return parts.join('  ·  ');
+  }
+
+  function resolveImageDigest() {
+    const context = imageLoadContext();
+    const digestGeneration = ++digestLoadGeneration;
+    const projectId = projectSelect.value;
+    const tag = imageTagInput.value.trim();
+    const hint = document.getElementById('image-tag-select-hint');
+
+    if (envSelect.value === 'PROD' && requireTestFirst) {
+      showToast('TEST 확인 완료 요청을 선택해 주세요.', 'error');
+      return;
+    }
+    // The previous tag's digest must not remain usable while this tag is loading or fails.
+    imageDigestInput.value = '';
+    if (!projectId || !tag) {
+      hint.textContent = 'Digest를 조회하려면 프로젝트와 이미지 태그가 필요합니다.';
+      hint.style.color = 'var(--muted)';
+      return;
+    }
+
+    const isCurrentDigest = () => isCurrentImageLoad(context)
+      && digestGeneration === digestLoadGeneration && tag === imageTagInput.value.trim();
+    const url = requestImageUrl(projectId, 'docker-manifest', context, {tag});
+    if (!url) {
+      hint.textContent = '프로젝트와 배포 환경을 선택해 주세요.';
+      return;
+    }
+
+    hint.textContent = 'Nexus에서 이미지 Digest를 조회하는 중입니다.';
+    hint.style.color = 'var(--muted)';
+
+    fetch(url, { cache: 'no-store' })
+      .then(response => response.json())
+      .then(data => {
+        if (!isCurrentDigest()) return;
+        if (data.success) {
+          imageDigestInput.value = data.data.digest || '';
+          const ctx = selectedImageContext();
+          const base = data.data.digest
+            ? ''
+            : 'Digest를 찾지 못해 태그만 반영했습니다.';
+          hint.textContent = ctx && base ? `${ctx}  ·  ${base}` : (base || ctx || '');
+          hint.style.color = data.data.digest ? 'var(--success)' : 'var(--warning)';
+          return;
+        }
+        hint.textContent = data.message || 'Digest를 조회하지 못했습니다.';
+        hint.style.color = 'var(--danger)';
+      })
+      .catch(() => {
+        if (!isCurrentDigest()) return;
+        hint.textContent = 'Digest 조회 중 오류가 발생했습니다.';
+        hint.style.color = 'var(--danger)';
+      });
+  }
+
+  function resetImageTagOptions(message) {
+    imageTagSelect.innerHTML = '<option value="">이미지를 선택해 주세요.</option>';
+    const hint = document.getElementById('image-tag-select-hint');
+    hint.textContent = message;
+    hint.style.color = 'var(--muted)';
+    const why = document.getElementById('image-why');
+    if (why) { why.style.display = 'none'; why.innerHTML = ''; }
+  }
+
+  /* 이미지가 하나도 없을 때, 왜 없는지 서버에 물어 그대로 보여 준다.
+
+     "조회 가능한 이미지 태그가 없습니다" 만 남기면 지금이 어느 상황인지 알 수 없다 —
+     빌드가 도는 중인지, 깨졌는지, 이 프로젝트가 애초에 이미지를 안 만드는지.
+     파이프라인을 볼 줄 아는 사람은 스스로 풀지만, 그걸 아는 사람은 여기서 안 막힌다. */
+  function explainNoImages(projectId, context) {
+    const box = document.getElementById('image-why');
+    if (!box || !projectId) return;
+    const url = requestImageUrl(projectId, 'image-status', context);
+    if (!url) return;
+    fetch(url, { cache: 'no-store' })
+      .then(function (r) { return r.json(); })
+      .then(function (res) {
+        if (!isCurrentImageLoad(context)) return;
+        const d = res && res.data;
+        if (!d) return;
+        box.style.display = '';
+        box.className = 'img-why ' + (d.reason === 'PIPELINE_RUNNING' ? 'wait' : 'stop');
+        box.innerHTML =
+          '<p class="img-why-t">' + escHtml(d.title) + '</p>'
+          + '<p class="img-why-d">' + escHtml(d.detail) + '</p>'
+          + '<p class="img-why-a"><b>할 일</b> ' + escHtml(d.action) + '</p>'
+          + (d.pipelineUrl
+              ? '<a class="img-why-link" href="' + escHtml(d.pipelineUrl) + '" target="_blank" rel="noopener">'
+                + 'GitLab 에서 빌드 보기 →</a>'
+              : '')
+          + (d.reason === 'PIPELINE_RUNNING'
+              ? '<button type="button" class="btn btn-ghost sm" style="margin-left:8px"'
+                + ' onclick="refreshImageTags()">다시 불러오기</button>'
+              : '');
+      })
+      .catch(function () { /* 원인 조회 실패는 조용히 넘긴다 — 원래 안내는 이미 떠 있다 */ });
+  }
+
+  function escHtml(t) {
+    return String(t == null ? '' : t)
+      .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+  }
+
+  function submitDeployRequest() {
+    if (syncTargetAvailability() === 0) {
+      showToast('선택한 환경·배포 범위의 대상 서버를 먼저 매핑해 주세요.', 'error');
+      return;
+    }
+    const projectId = projectSelect.value;
+    const environment = envSelect.value;
+    const deployMode = currentMode();
+    const deployScope = document.getElementById('req-scope')?.value || 'ALL';
+    const deployStrategy = document.getElementById('req-strategy')?.value || 'SAFE';
+    const branch = branchSelect.value.trim();
+    const reason = document.getElementById('req-reason').value.trim();
+    const imageTag = imageTagInput.value.trim();
+    const imageDigest = imageDigestInput.value.trim();
+    const promotionSourceId = imageTagSelect.selectedOptions[0]?.dataset.sourceId || null;
+
+    if (!projectId || !environment || !reason) {
+      showToast('필수 항목을 모두 입력해 주세요.', 'error');
+      return;
+    }
+    if (reason.length < 10) {
+      showToast('배포 사유는 10자 이상 입력해 주세요.', 'error');
+      return;
+    }
+    if (deployMode === 'BUILD_AND_DEPLOY') {
+      showToast('새 이미지 빌드는 프로젝트 MR 화면에서 시작해 주세요.', 'error');
+      return;
+    }
+    if (environment === 'PROD' && requireTestFirst
+        && (!Number.isSafeInteger(Number(promotionSourceId)) || Number(promotionSourceId) <= 0
+          || imageTagSelect.selectedOptions[0]?.value !== imageTag)) {
+      showToast('PROD는 TEST 확인 완료 요청을 선택한 뒤 신청해 주세요.', 'error');
+      return;
+    }
+    if (deployMode === 'IMAGE_ONLY' && !imageTag) {
+      showToast('기존 이미지로 배포하려면 이미지 태그를 선택해 주세요.', 'error');
+      return;
+    }
+    let componentImages;
+    try { componentImages = collectReleaseComponents(); }
+    catch (error) { showToast(error.message, 'error'); return; }
+
+    const csrfToken = document.querySelector('meta[name="_csrf"]').content;
+    const csrfHeader = document.querySelector('meta[name="_csrf_header"]').content;
+
+    fetch('/api/v1/deploy-requests', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        [csrfHeader]: csrfToken
+      },
+      body: JSON.stringify({
+        projectId: Number(projectId),
+        environment,
+        deployMode,
+        deployScope,
+        deployStrategy,
+        serverGroupIds: Array.from(document.querySelectorAll('#req-groups input:checked'))
+          .filter(input => !input.disabled).map(input => Number(input.value)),
+        branch: branch || null,
+        reason,
+        gitlabPipelineId: null,
+        commitSha: null,
+        imageTag: imageTag || null,
+        imageDigest: imageDigest || null,
+        componentImages,
+        promotionSourceRequestId: promotionSourceId ? Number(promotionSourceId) : null
+      })
+    })
+    .then(response => response.json())
+    .then(data => {
+      if (data.success) {
+        showToast('배포 요청이 생성되었습니다.', 'success');
+        navigate('request-detail', data.data.id);
+        return;
+      }
+      showToast(data.message || '오류가 발생했습니다.', 'error');
+    })
+    .catch(() => showToast('네트워크 오류가 발생했습니다.', 'error'));
+  }
+  </script>
+
+</th:block>
+</body>
+</html>

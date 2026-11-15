@@ -1,0 +1,3 @@
+-- 기존 ENUM 순서를 유지하여 저장된 권한의 인덱스를 바꾸지 않는다. 권한을 자동 부여하지 않는다.
+ALTER TABLE `project_user_permissions`
+    MODIFY COLUMN `permission` ENUM('PROJECT_VIEW','DEPLOY_REQUEST','MR_REVIEW','MR_APPROVE','MR_MERGE','TEST_APPROVE','PROD_APPROVE','TEST_EXECUTE','PROD_EXECUTE','ROLLBACK_EXECUTE','CI_VARIABLE_MANAGE') NOT NULL;

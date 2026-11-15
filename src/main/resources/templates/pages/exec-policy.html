@@ -1,0 +1,220 @@
+<!DOCTYPE html>
+<html xmlns:th="http://www.thymeleaf.org">
+<body>
+<th:block th:fragment="content">
+
+  <div class="page-header">
+    <div>
+      <h1 class="page-title">실행 정책</h1>
+      <p class="page-desc">모든 프로젝트에 함께 적용되는 배포 실행 규칙입니다.</p>
+    </div>
+    <div class="page-actions">
+      <button class="btn btn-primary" onclick="saveExecPolicy()">저장</button>
+    </div>
+  </div>
+
+  <div class="notice-box warning" style="margin-bottom:20px">
+    <div>실행 정책 변경은 <strong>즉시 적용</strong>됩니다. 진행 중인 배포에는 영향을 주지 않습니다.</div>
+  </div>
+
+  <!-- PROD 배포 제한 -->
+  <div class="section-card" style="margin-bottom:20px">
+    <h3 class="section-title">PROD 배포 제한</h3>
+    <div class="form-grid">
+      <div class="form-group full">
+        <div style="display:flex;align-items:flex-start;gap:11px">
+          <label class="toggle-switch"><input type="checkbox" id="require-test-first" checked><span class="toggle-track"><span class="toggle-thumb"></span></span></label>
+          <div>
+            <span class="form-label" style="margin:0;display:block">PROD 배포 전 TEST 확인 필수</span>
+          <p class="form-hint" style="margin:4px 0 0">테스트 환경에 먼저 배포해 확인을 마쳐야 운영 배포를 할 수 있습니다.</p>
+          </div>
+        </div>
+        </label>
+        <p class="form-hint">활성화 시, TEST 배포 완료 + 담당자 테스트 확인 없이는 PROD 배포 요청이 불가합니다.</p>
+      </div>
+      <div class="form-group full">
+        <div style="display:flex;align-items:flex-start;gap:11px">
+          <label class="toggle-switch"><input type="checkbox" id="require-approval" checked><span class="toggle-track"><span class="toggle-thumb"></span></span></label>
+          <div>
+            <span class="form-label" style="margin:0;display:block">PROD 배포 승인 필수</span>
+          <p class="form-hint" style="margin:4px 0 0">운영 배포는 승인권자의 승인을 받아야 실행됩니다.</p>
+          </div>
+        </div>
+        </label>
+        <p class="form-hint">비활성화해도 선택한 서버 그룹의 추가 승인과 운영 롤백의 필수 승인은 유지됩니다. (권장: 활성)</p>
+      </div>
+      <div class="form-group full">
+        <div style="display:flex;align-items:flex-start;gap:11px">
+          <label class="toggle-switch"><input type="checkbox" id="require-mr-evidence-for-build" checked><span class="toggle-track"><span class="toggle-thumb"></span></span></label>
+          <div>
+            <span class="form-label" style="margin:0;display:block">새 이미지 빌드 전 MR 승인·병합 증거 필수</span>
+            <p class="form-hint" style="margin:4px 0 0">DeployOps에서 검토·승인·병합한 MR의 확정 commit만 TEST 이미지로 만들 수 있습니다.</p>
+          </div>
+        </div>
+        <p class="form-hint">비활성화하면 일반 브랜치·태그를 직접 지정하는 기존 빌드 요청도 허용됩니다.</p>
+      </div>
+    </div>
+  </div>
+
+  <!-- 자동화는 모두 명시적 opt-in -->
+  <div class="section-card" style="margin-bottom:20px">
+    <h3 class="section-title">검증된 배포 자동화</h3>
+    <div class="notice-box warning" style="margin-bottom:16px">
+      자동 승인은 추가 승인 정책이 있는 그룹을 선택하지 않고, TEST 확인 완료 승격의 이미지·digest·commit·브랜치가 모두 일치할 때만 적용됩니다.
+      수동 배포 전략은 자동 실행하지 않습니다.
+    </div>
+    <div class="form-grid">
+      <div class="form-group full">
+        <div style="display:flex;align-items:flex-start;gap:11px">
+          <label class="toggle-switch"><input type="checkbox" id="auto-approve-verified-promotion"><span class="toggle-track"><span class="toggle-thumb"></span></span></label>
+          <div><span class="form-label" style="margin:0;display:block">검증된 TEST 승격 자동 승인</span><p class="form-hint" style="margin:4px 0 0">선택한 그룹에 추가 승인 정책이 없고, 허용 브랜치의 검증된 TEST 산출물을 그대로 PROD로 승격할 때만 승인 단계를 자동 완료합니다.</p></div>
+        </div>
+      </div>
+      <div class="form-group full">
+        <label class="form-label" for="auto-approval-allowed-branches">자동 승인 허용 브랜치</label>
+        <textarea class="form-input" id="auto-approval-allowed-branches" rows="3" placeholder="main&#10;release/2026-q3"></textarea>
+        <p class="form-hint">쉼표 또는 줄바꿈으로 구분합니다. 와일드카드는 지원하지 않으며 정확히 일치하는 브랜치만 허용합니다.</p>
+      </div>
+      <div class="form-group full">
+        <div style="display:flex;gap:24px;flex-wrap:wrap">
+          <div style="display:flex;align-items:center;gap:11px"><label class="toggle-switch"><input type="checkbox" id="auto-dispatch-test"><span class="toggle-track"><span class="toggle-thumb"></span></span></label><span class="form-label" style="margin:0">TEST 준비 완료 시 자동 실행</span></div>
+          <div style="display:flex;align-items:center;gap:11px"><label class="toggle-switch"><input type="checkbox" id="auto-dispatch-prod"><span class="toggle-track"><span class="toggle-thumb"></span></span></label><span class="form-label" style="margin:0">PROD 승인 완료 시 자동 실행</span></div>
+        </div>
+        <p class="form-hint">SAFE·WAVE 전략만 자동 실행하며, 시간 제한·Freeze window·동시 실행 제한을 동일하게 적용합니다. TEST도 그룹 추가 승인이 있으면 승인을 모두 마친 준비 상태에서만 자동 실행합니다.</p>
+      </div>
+    </div>
+  </div>
+
+  <!-- 배포 시간 제한 -->
+  <div class="section-card" style="margin-bottom:20px">
+    <h3 class="section-title">배포 허용 시간</h3>
+    <div class="form-grid">
+      <div class="form-group full">
+        <div style="display:flex;align-items:flex-start;gap:11px">
+          <label class="toggle-switch"><input type="checkbox" id="restrict-time"><span class="toggle-track"><span class="toggle-thumb"></span></span></label>
+          <div>
+            <span class="form-label" style="margin:0;display:block">배포 가능 시간 제한</span>
+          <p class="form-hint" style="margin:4px 0 0">아래 시간대에만 운영 배포를 허용합니다.</p>
+          </div>
+        </div>
+        </label>
+      </div>
+      <div class="form-group">
+        <label class="form-label" for="allow-start">허용 시작 시간</label>
+        <input class="form-input" type="time" id="allow-start" value="09:00">
+      </div>
+      <div class="form-group">
+        <label class="form-label" for="allow-end">허용 종료 시간</label>
+        <input class="form-input" type="time" id="allow-end" value="18:00">
+      </div>
+      <div class="form-group full">
+        <label class="form-label">허용 요일</label>
+        <div style="display:flex;gap:6px;flex-wrap:wrap" id="allowed-weekdays">
+          <label class="day-chip"><input type="checkbox" value="MONDAY" checked hidden><span>월</span></label>
+          <label class="day-chip"><input type="checkbox" value="TUESDAY" checked hidden><span>화</span></label>
+          <label class="day-chip"><input type="checkbox" value="WEDNESDAY" checked hidden><span>수</span></label>
+          <label class="day-chip"><input type="checkbox" value="THURSDAY" checked hidden><span>목</span></label>
+          <label class="day-chip"><input type="checkbox" value="FRIDAY" checked hidden><span>금</span></label>
+          <label class="day-chip"><input type="checkbox" value="SATURDAY" hidden><span>토</span></label>
+          <label class="day-chip"><input type="checkbox" value="SUNDAY" hidden><span>일</span></label>
+        </div>
+        <p class="form-hint">선택한 요일에만 운영 배포를 허용합니다.</p>
+      </div>
+    </div>
+  </div>
+
+  <!-- 동시 배포 제한 -->
+  <div class="section-card" style="margin-bottom:20px">
+    <h3 class="section-title">동시 배포 제한</h3>
+    <div class="form-grid">
+      <div class="form-group">
+        <label class="form-label" for="max-concurrent">최대 동시 배포 수</label>
+        <input class="form-input" type="number" id="max-concurrent" value="1" min="1" max="10">
+        <p class="form-hint">동시에 실행 가능한 최대 배포 작업 수입니다.</p>
+      </div>
+    </div>
+  </div>
+
+  <div class="section-card" style="margin-bottom:20px">
+    <h3 class="section-title">운영 금지시간 (Freeze window)</h3>
+    <div class="form-grid">
+      <div class="form-group full"><label class="toggle-switch"><input type="checkbox" id="freeze-enabled"><span class="toggle-track"><span class="toggle-thumb"></span></span></label><span class="form-label" style="margin-left:10px">PROD 금지시간 적용</span><p class="form-hint">금지시간에는 PROD 실행 시작이 차단됩니다. 승인 요청 생성은 가능합니다.</p></div>
+      <div class="form-group"><label class="form-label" for="freeze-start">금지 시작</label><input class="form-input" type="time" id="freeze-start" value="00:00"></div>
+      <div class="form-group"><label class="form-label" for="freeze-end">금지 종료</label><input class="form-input" type="time" id="freeze-end" value="23:59"></div>
+      <div class="form-group full"><label class="form-label" for="freeze-reason">금지 사유</label><input class="form-input" id="freeze-reason" maxlength="200" value="정기 점검"></div>
+      <div class="form-group full"><label class="form-label">금지 요일</label><div id="freeze-weekdays" style="display:flex;gap:6px;flex-wrap:wrap"><label class="day-chip"><input type="checkbox" value="MONDAY" hidden><span>월</span></label><label class="day-chip"><input type="checkbox" value="TUESDAY" hidden><span>화</span></label><label class="day-chip"><input type="checkbox" value="WEDNESDAY" hidden><span>수</span></label><label class="day-chip"><input type="checkbox" value="THURSDAY" hidden><span>목</span></label><label class="day-chip"><input type="checkbox" value="FRIDAY" hidden><span>금</span></label><label class="day-chip"><input type="checkbox" value="SATURDAY" checked hidden><span>토</span></label><label class="day-chip"><input type="checkbox" value="SUNDAY" checked hidden><span>일</span></label></div></div>
+    </div>
+  </div>
+
+  <script>
+  var _csrf = document.querySelector('meta[name="_csrf"]').content;
+  var _csrfH = document.querySelector('meta[name="_csrf_header"]').content;
+
+  fetch('/api/v1/settings/exec-policy')
+    .then(r => r.json())
+    .then(res => {
+      const d = res.data || {};
+      if (d['require-test-first'] !== undefined)
+        document.getElementById('require-test-first').checked = d['require-test-first'] !== 'false';
+      if (d['require-approval'] !== undefined)
+        document.getElementById('require-approval').checked = d['require-approval'] !== 'false';
+      if (d['require-mr-evidence-for-build'] !== undefined)
+        document.getElementById('require-mr-evidence-for-build').checked = d['require-mr-evidence-for-build'] !== 'false';
+      document.getElementById('auto-approve-verified-promotion').checked = d['auto-approve-verified-promotion'] === 'true';
+      document.getElementById('auto-dispatch-test').checked = d['auto-dispatch-test'] === 'true';
+      document.getElementById('auto-dispatch-prod').checked = d['auto-dispatch-prod'] === 'true';
+      document.getElementById('auto-approval-allowed-branches').value = d['auto-approval-allowed-branches'] || '';
+      if (d['restrict-time'])
+        document.getElementById('restrict-time').checked = d['restrict-time'] === 'true';
+      if (d['allow-start']) document.getElementById('allow-start').value = d['allow-start'];
+      if (d['allow-end']) document.getElementById('allow-end').value = d['allow-end'];
+      if (d['max-concurrent']) document.getElementById('max-concurrent').value = d['max-concurrent'];
+      if (d['freeze-enabled'] !== undefined) document.getElementById('freeze-enabled').checked = d['freeze-enabled'] === 'true';
+      if (d['freeze-start']) document.getElementById('freeze-start').value = d['freeze-start'];
+      if (d['freeze-end']) document.getElementById('freeze-end').value = d['freeze-end'];
+      if (d['freeze-reason']) document.getElementById('freeze-reason').value = d['freeze-reason'];
+      const freezeDays = new Set((d['freeze-weekdays'] || 'SATURDAY,SUNDAY').split(','));
+      document.querySelectorAll('#freeze-weekdays input').forEach(input => { input.checked = freezeDays.has(input.value); });
+      const days = new Set((d['allowed-weekdays'] || 'MONDAY,TUESDAY,WEDNESDAY,THURSDAY,FRIDAY').split(','));
+      document.querySelectorAll('#allowed-weekdays input').forEach(input => { input.checked = days.has(input.value); });
+    });
+
+  function saveExecPolicy() {
+    const vals = {
+      'require-test-first': String(document.getElementById('require-test-first').checked),
+      'require-approval': String(document.getElementById('require-approval').checked),
+      'require-mr-evidence-for-build': String(document.getElementById('require-mr-evidence-for-build').checked),
+      'auto-approve-verified-promotion': String(document.getElementById('auto-approve-verified-promotion').checked),
+      'auto-dispatch-test': String(document.getElementById('auto-dispatch-test').checked),
+      'auto-dispatch-prod': String(document.getElementById('auto-dispatch-prod').checked),
+      'auto-approval-allowed-branches': document.getElementById('auto-approval-allowed-branches').value,
+      'restrict-time': String(document.getElementById('restrict-time').checked),
+      'allow-start': document.getElementById('allow-start').value,
+      'allow-end': document.getElementById('allow-end').value,
+      'max-concurrent': document.getElementById('max-concurrent').value,
+      'allowed-weekdays': [...document.querySelectorAll('#allowed-weekdays input:checked')]
+        .map(input => input.value).join(','),
+      'freeze-enabled': String(document.getElementById('freeze-enabled').checked),
+      'freeze-start': document.getElementById('freeze-start').value,
+      'freeze-end': document.getElementById('freeze-end').value,
+      'freeze-reason': document.getElementById('freeze-reason').value,
+      'freeze-weekdays': [...document.querySelectorAll('#freeze-weekdays input:checked')]
+        .map(input => input.value).join(',')
+    };
+    fetch('/api/v1/settings/exec-policy', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', [_csrfH]: _csrf },
+      body: JSON.stringify(vals)
+    })
+    .then(r => r.json())
+    .then(res => {
+      if (!res.success) throw new Error(res.message || '저장 실패');
+      showToast('실행 정책이 저장되었습니다.', 'success');
+    })
+    .catch(err => showToast(err.message || '저장 실패', 'error'));
+  }
+  </script>
+
+</th:block>
+</body>
+</html>

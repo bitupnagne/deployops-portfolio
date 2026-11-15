@@ -1,0 +1,25 @@
+[Unit]
+Description=Deploy outbound WAS/WEB agent
+Wants=network-online.target
+After=network-online.target
+ConditionPathExists=/etc/deploy-system/agent.json
+
+[Service]
+Type=simple
+User=root
+Group=root
+UMask=0077
+ExecStart=/usr/libexec/platform-python /usr/local/deploy/bin/deploy-pull-agent.py --config /etc/deploy-system/agent.json --state-root /var/lib/deploy-system/agent run
+Restart=on-failure
+RestartSec=10
+TimeoutStopSec=30
+KillMode=control-group
+LimitCORE=0
+NoNewPrivileges=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6 AF_NETLINK
+
+[Install]
+WantedBy=multi-user.target

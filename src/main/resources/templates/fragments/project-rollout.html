@@ -1,0 +1,27 @@
+<!DOCTYPE html>
+<html xmlns:th="http://www.thymeleaf.org"><body>
+<div th:fragment="panel" id="tab-rollout" class="tab-panel section-card" role="tabpanel"
+     aria-labelledby="tabbtn-rollout" th:data-project-id="${project.id}">
+  <h3 class="section-title">롤링 배포 nginx 연결</h3>
+  <p class="notice-box">이 프로젝트의 WAS로 요청을 전달하는 WEB 정책을 연결합니다. nginx가 개별 WAS에 직접 연결된 경우 교체 대상을 제외하고 정상 확인 후 복귀합니다. 외부 VIP를 사용하면 L4 멤버를 제어하지 않고 개별 WAS를 순차 교체·헬스체크하므로 무중단은 보장하지 않습니다. 연결 저장만으로 nginx 설정이 변경되지는 않습니다.</p>
+  <div class="form-grid">
+    <div class="form-group">
+      <label class="form-label" for="rollout-environment">환경</label>
+      <select id="rollout-environment" data-rollout="environment" class="form-select" data-no-custom-select onchange="ProjectRollout.open()">
+        <option value="TEST">TEST (개발·검증)</option><option value="PROD">PROD (운영)</option>
+      </select>
+    </div>
+    <div class="form-group" style="justify-content:flex-end">
+      <button type="button" class="btn btn-ghost" data-rollout="reload" onclick="ProjectRollout.open()">연결 다시 조회</button>
+    </div>
+  </div>
+  <p class="form-hint">서버 매핑에 등록된 같은 환경의 WEB에서 적용 완료된 프록시 정책만 표시합니다. 다른 프로젝트가 연결한 정책은 선택할 수 없습니다. 먼저 서버 그룹의 WEB nginx 화면에서 정책을 적용하세요.</p>
+  <fieldset data-rollout="choices" style="border:0;padding:0;min-width:0" disabled>
+    <legend class="form-label">연결할 WEB 정책</legend>
+    <div data-rollout="rows"></div>
+  </fieldset>
+  <p data-rollout="status" role="status" aria-live="polite">환경을 선택하고 연결을 조회하세요.</p>
+  <button class="btn btn-primary" type="button" data-rollout="save" hidden onclick="ProjectRollout.save()">이 환경의 연결 저장</button>
+  <p class="form-hint">모두 해제하고 저장하면 이 환경의 연결을 제거합니다. 이후 새 배포 요청에 반영되며, 기존 요청은 계획이 변경된 경우 다시 승인받아야 합니다.</p>
+</div>
+</body></html>

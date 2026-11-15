@@ -1,0 +1,27 @@
+<!doctype html>
+<html lang="ko" xmlns:th="http://www.thymeleaf.org">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>접근 권한 없음 | DeployOps</title>
+  <link rel="stylesheet" th:href="@{/css/styles.css}">
+  <style>
+    body { min-height: 100vh; display: grid; place-items: center; margin: 0; padding: 24px; background: var(--bg, #f3f5f8); }
+    main { width: min(100%, 520px); padding: 36px; border: 1px solid var(--border, #dce1e8); border-radius: 16px; background: #fff; box-shadow: 0 16px 44px rgba(20, 36, 60, .09); }
+    h1 { margin: 0 0 12px; font-size: 24px; }
+    p { color: var(--muted, #667085); line-height: 1.65; }
+    .code { display: inline-block; margin-bottom: 14px; color: #b54708; font-size: 13px; font-weight: 700; }
+    .actions { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 24px; }
+  </style>
+</head>
+<body>
+  <main role="main" aria-labelledby="access-denied-title">
+    <span class="code">403 · FORBIDDEN</span>
+    <h1 id="access-denied-title">이 화면을 볼 권한이 없습니다</h1>
+    <p>현재 계정에 이 메뉴의 접근 권한이 없습니다. 필요한 업무 권한이 있다면 DeployOps 관리자에게 요청해 주세요.</p>
+    <div class="actions">
+      <a class="btn btn-primary" th:href="@{/deploy/dashboard}">대시보드로 이동</a>
+    </div>
+  </main>
+</body>
+</html>

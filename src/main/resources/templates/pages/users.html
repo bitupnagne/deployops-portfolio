@@ -1,0 +1,628 @@
+<!DOCTYPE html>
+<html xmlns:th="http://www.thymeleaf.org">
+<body>
+<th:block th:fragment="content">
+
+  <div class="page-header">
+    <div>
+      <h1 class="page-title">사용자 / 역할</h1>
+      <p class="page-desc">배포시스템 사용자, 소속 팀, 역할, GitLab 연동 상태를 관리합니다.</p>
+    </div>
+    <div class="page-actions">
+      <button class="btn btn-ghost" onclick="openGlMapModal()">GitLab 매핑 점검</button>
+      <button class="btn btn-primary" onclick="openUserModal()">사용자 추가</button>
+    </div>
+  </div>
+
+  <div class="section-card">
+    <div class="table-wrap user-list-table-wrap" role="region" aria-label="사용자 목록 표 — 가로로 스크롤할 수 있습니다" tabindex="0">
+      <table class="data-table user-list-table">
+        <thead>
+        <tr>
+          <th scope="col">이름</th>
+          <th scope="col">아이디</th>
+          <th scope="col">팀</th>
+          <th scope="col">역할</th>
+          <th scope="col">GitLab</th>
+          <th scope="col">상태</th>
+          <th scope="col">마지막 로그인</th>
+          <th scope="col">관리</th>
+        </tr>
+        </thead>
+        <tbody>
+        <tr th:if="${#lists.isEmpty(users)}">
+          <td colspan="8" style="text-align:center;padding:32px;color:var(--muted)"><div class="table-empty-content">
+              <p style="margin:0 0 10px">아직 등록된 사용자가 없습니다.</p>
+              <button class="btn btn-primary sm" type="button" onclick="openUserModal()">첫 사용자 추가</button>
+            </div></td>
+        </tr>
+        <tr th:each="u : ${users}">
+          <td><strong th:text="${u.name}">이름</strong></td>
+          <td class="mono" th:text="${u.loginId}">loginId</td>
+          <td th:text="${u.team?.name ?: '-'}">팀</td>
+          <td>
+            <span th:class="'role-badge ' + ${u.role.name().toLowerCase().replace('_','-')}"
+                  th:text="${u.role.label}">역할</span>
+          </td>
+          <td>
+            <span th:if="${u.gitlabUsername != null}"
+                  class="status-badge completed"
+                  style="font-size:11px"
+                  th:text="${u.gitlabUsername}">username</span>
+            <span th:unless="${u.gitlabUsername != null}"
+                  style="font-size:11px;color:var(--muted)">미연동</span>
+          </td>
+          <td>
+            <span class="status-badge completed" th:if="${u.active}">활성</span>
+            <span class="status-badge failed" th:unless="${u.active}">비활성</span>
+          </td>
+          <td th:text="${u.lastLoginAt != null ? #temporals.format(u.lastLoginAt, 'MM/dd HH:mm') : '-'}">일시</td>
+          <td>
+            <button class="btn-ghost sm edit-user-btn"
+                    th:data-id="${u.id}"
+                    th:data-name="${u.name}"
+                    th:data-loginid="${u.loginId}"
+                    th:data-role="${u.role.name()}"
+                    th:data-active="${u.active}"
+                    th:data-gitlabusername="${u.gitlabUsername ?: ''}"
+                    th:data-teamid="${u.team != null ? u.team.id : ''}"
+                    data-ui-edit-link onclick="openUserModalFromBtn(this)">수정</button>
+            <button class="btn-ghost sm" type="button"
+                    th:if="${currentUser != null and currentUser.id != u.id}"
+                    th:data-id="${u.id}" th:data-name="${u.name}"
+                    onclick="openResetPasswordModal(this)">비밀번호 재설정</button>
+            <button class="btn-ghost sm" style="color:var(--danger)"
+                    th:data-id="${u.id}" th:data-name="${u.name}"
+                    th:if="${u.active}"
+                    onclick="deactivateUser(this)">비활성화</button>
+          </td>
+        </tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <div id="reset-password-modal" class="modal-overlay" style="display:none">
+    <div class="modal" style="width:460px" role="dialog" aria-modal="true" aria-labelledby="reset-password-title">
+      <div class="modal-header">
+        <h3 class="modal-title" id="reset-password-title">비밀번호 재설정</h3>
+        <button class="modal-close" type="button" onclick="closeResetPasswordModal()" aria-label="닫기">×</button>
+      </div>
+      <div class="modal-body">
+        <input type="hidden" id="reset-password-user-id">
+        <p class="form-hint" id="reset-password-target"></p>
+        <p class="form-hint">사용자별 임시 비밀번호를 설정합니다. 사용자는 다음 로그인 시 반드시 새 비밀번호로 변경해야 합니다.</p>
+        <div class="form-group">
+          <label class="form-label" for="reset-password-value">임시 비밀번호 <span class="req">*</span></label>
+          <input class="form-input" id="reset-password-value" type="password" autocomplete="new-password">
+        </div>
+        <div class="form-group" style="margin-top:12px">
+          <label class="form-label" for="reset-password-confirm">임시 비밀번호 확인 <span class="req">*</span></label>
+          <input class="form-input" id="reset-password-confirm" type="password" autocomplete="new-password">
+        </div>
+        <p class="form-hint">9자 이상, 영문·숫자·특수문자를 포함해 주세요. 공통 비밀번호는 사용하지 마세요.</p>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-ghost" type="button" onclick="closeResetPasswordModal()">취소</button>
+        <button class="btn btn-primary" type="button" onclick="submitResetPassword()">재설정</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="user-modal" class="modal-overlay" style="display:none" data-ui-edit-modal data-ui-edit-record="#user-edit-id">
+    <div class="modal" style="width:520px" role="dialog" aria-modal="true" aria-labelledby="user-modal-title">
+      <div class="modal-header">
+        <h3 class="modal-title" id="user-modal-title">사용자 추가</h3>
+        <button class="modal-close" onclick="closeUserModal()" aria-label="닫기">×</button>
+      </div>
+      <div class="modal-body">
+        <input type="hidden" id="user-edit-id">
+        <div class="form-grid">
+          <div class="form-group">
+            <label class="form-label" for="user-name">이름 <span class="req">*</span></label>
+            <input class="form-input" id="user-name" placeholder="홍길동">
+          </div>
+          <div class="form-group">
+            <label class="form-label" for="user-loginid">아이디 <span class="req">*</span></label>
+            <input class="form-input" id="user-loginid" placeholder="hong" autocomplete="off">
+          </div>
+          <div class="form-group full" id="user-pw-group">
+            <label class="form-label" for="user-password">초기 비밀번호 <span class="req">*</span></label>
+            <input class="form-input" id="user-password" type="password" autocomplete="new-password" placeholder="사용자별 임시 비밀번호 입력">
+            <small class="form-hint">9자 이상이며 영문·숫자·특수문자를 모두 포함해야 합니다. 첫 로그인 시 변경을 요구합니다.</small>
+          </div>
+          <div class="form-group">
+            <label class="form-label" for="user-role">역할 <span class="req">*</span></label>
+            <select class="form-select" id="user-role">
+              <option value="DEVELOPER">DEVELOPER</option>
+              <option value="APPROVER">APPROVER</option>
+              <option value="OPERATOR">OPERATOR</option>
+              <option value="PROJECT_MANAGER">PROJECT_MANAGER</option>
+              <option value="SUPER_ADMIN">SUPER_ADMIN</option>
+            </select>
+          </div>
+          <div class="form-group">
+            <label class="form-label" for="user-team">소속 팀</label>
+            <select class="form-select" id="user-team">
+              <option value="">미소속</option>
+              <option th:each="t : ${teams}" th:value="${t.id}" th:text="${t.name}">팀</option>
+            </select>
+          </div>
+          <div class="form-group">
+            <label class="form-label" for="user-active">상태</label>
+            <select class="form-select" id="user-active">
+              <option value="true">활성</option>
+              <option value="false">비활성</option>
+            </select>
+          </div>
+        </div>
+
+        <div style="margin-top:16px;padding-top:16px;border-top:1px solid var(--border)">
+          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px">
+            <span style="font-size:13px;font-weight:600">GitLab 계정 연동</span>
+            <span id="user-gitlab-status" style="font-size:12px;color:var(--muted)">미연동</span>
+          </div>
+          <div class="form-grid" style="gap:8px">
+            <div class="form-group full">
+              <label class="form-label" for="user-gitlab-token" style="font-size:12px">개인 접근 토큰</label>
+              <div style="display:flex;gap:6px">
+                <input class="form-input mono" type="password" id="user-gitlab-token"
+                       placeholder="glpat-xxxx  (비우면 유지, 공백 저장 시 해제)" style="flex:1;font-size:12px">
+                <button class="btn btn-ghost" type="button" style="padding:6px 10px;font-size:12px"
+                        onclick="toggleUserTokenVisibility()">보기</button>
+                <button class="btn btn-ghost" type="button" style="padding:6px 10px;font-size:12px"
+                        onclick="testUserGitlabToken()">테스트</button>
+              </div>
+              <p class="form-hint" style="margin-top:4px">편집 시 비워두면 기존 연동을 유지합니다. 연동을 해제하려면 공백 문자만 입력 후 저장하세요.</p>
+            </div>
+          </div>
+          <div id="user-gitlab-test-result" style="font-size:12px;color:var(--muted);min-height:16px;margin-top:4px"></div>
+          <div style="margin-top:12px;padding-top:12px;border-top:1px dashed var(--border)">
+            <label class="form-label" for="user-gitlab-search" style="font-size:12px">GitLab 사용자 연결</label>
+            <div style="display:flex;gap:6px;align-items:center">
+              <input class="form-input" id="user-gitlab-search" placeholder="username or name" style="flex:1;font-size:12px">
+              <button class="btn btn-ghost" type="button" style="padding:6px 10px;font-size:12px"
+                      onclick="searchGitlabUsers()">Search</button>
+              <button class="btn btn-ghost" type="button" style="padding:6px 10px;font-size:12px"
+                      onclick="clearGitlabMapping()">Clear</button>
+            </div>
+            <p class="form-hint" style="margin-top:4px">Select a GitLab account for approval/deploy ownership. PAT is still required when this user must access GitLab with their own permission.</p>
+            <div id="user-gitlab-user-list" style="display:grid;gap:6px;margin-top:8px;max-height:160px;overflow:auto"></div>
+          </div>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-ghost" onclick="closeUserModal()" data-ui-edit-cancel>취소</button>
+        <button class="btn btn-primary" onclick="submitUserModal()" data-ui-edit-save>저장</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- GitLab 사용자 매핑 점검 모달 -->
+  <div id="gl-map-modal" class="modal-overlay" style="display:none">
+    <div class="modal" style="width:760px;max-width:94vw" role="dialog" aria-modal="true" aria-labelledby="gl-map-modal-title">
+      <div class="modal-header">
+        <h3 class="modal-title" id="gl-map-modal-title">GitLab 사용자 매핑 점검</h3>
+        <button class="modal-close" onclick="closeGlMapModal()" aria-label="닫기">×</button>
+      </div>
+      <div class="modal-body">
+        <p class="form-hint" style="margin:0 0 10px">
+          GitLab 사용자별로 배포시스템 계정 연결 상태를 보여줍니다.
+          <b>미등록</b> 사용자의 MR은 자동으로 close 됩니다 — 필요한 사용자는 여기서 연결하세요.
+        </p>
+        <div style="display:flex;gap:6px;align-items:center;margin-bottom:10px">
+          <input class="form-input" id="gl-map-search" placeholder="username 또는 이름" style="flex:1;font-size:13px"
+                 onkeydown="if(event.key==='Enter')loadGlMapping()">
+          <button class="btn btn-ghost" type="button" style="padding:6px 12px" onclick="loadGlMapping()">검색</button>
+          <label class="toggle-field" style="white-space:nowrap">
+            <input type="checkbox" id="gl-map-unmapped-only" onchange="renderGlMapping()" hidden>
+            <span class="toggle-track"><span class="toggle-thumb"></span></span>
+            <span class="toggle-text" style="font-size:12px">미등록만</span>
+          </label>
+        </div>
+        <div id="gl-map-msg" style="font-size:12px;color:var(--muted);min-height:16px;margin-bottom:6px"></div>
+        <div class="table-wrap" style="max-height:420px;overflow:auto">
+          <table class="data-table">
+            <thead><tr>
+              <th scope="col">GitLab 사용자</th><th scope="col">이름</th><th scope="col">상태</th><th scope="col">배포시스템 연결</th>
+            </tr></thead>
+            <tbody id="gl-map-tbody"></tbody>
+          </table>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-ghost" onclick="closeGlMapModal()">닫기</button>
+      </div>
+    </div>
+  </div>
+
+  <script>
+  (function keepUserTableFocusVisible() {
+    const wrap = document.querySelector('.user-list-table-wrap');
+    if (!wrap) return;
+    wrap.addEventListener('focusin', function (event) {
+      const control = event.target.closest('button, a, input, select, textarea, [tabindex]');
+      if (!control || control === wrap || !wrap.contains(control)) return;
+      requestAnimationFrame(function () {
+        if (document.activeElement !== control || !wrap.contains(control)) return;
+        const bounds = wrap.getBoundingClientRect();
+        const focused = control.getBoundingClientRect();
+        const left = bounds.left + wrap.clientLeft;
+        const right = left + wrap.clientWidth;
+        const gutter = 6;
+        let shift = 0;
+        if (focused.left < left + gutter) shift = focused.left - left - gutter;
+        else if (focused.right > right - gutter) shift = focused.right - right + gutter;
+        if (shift) wrap.scrollLeft = Math.max(0, Math.min(
+          wrap.scrollWidth - wrap.clientWidth, wrap.scrollLeft + shift));
+      });
+    });
+  })();
+  // ── GitLab 사용자 매핑 점검 ──
+  var glMapData = [];
+  var glDeployUsers = [];
+  function glCsrf() {
+    return {
+      [document.querySelector('meta[name="_csrf_header"]').content]:
+        document.querySelector('meta[name="_csrf"]').content
+    };
+  }
+  function glEsc(s) {
+    return String(s == null ? '' : s).replace(/[&<>"']/g, c =>
+      ({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;' }[c]));
+  }
+  function openGlMapModal() {
+    document.getElementById('gl-map-modal').style.display = 'flex';
+    document.getElementById('gl-map-search').value = '';
+    document.getElementById('gl-map-tbody').innerHTML = '';
+    document.getElementById('gl-map-msg').textContent = '배포시스템 사용자 목록을 불러오는 중...';
+    fetch('/api/v1/users').then(r => r.json()).then(d => {
+      glDeployUsers = (d.success && Array.isArray(d.data)) ? d.data : [];
+      loadGlMapping();
+    }).catch(() => { glDeployUsers = []; loadGlMapping(); });
+  }
+  function closeGlMapModal() { document.getElementById('gl-map-modal').style.display = 'none'; }
+
+  function loadGlMapping() {
+    const q = document.getElementById('gl-map-search').value.trim();
+    const msg = document.getElementById('gl-map-msg');
+    msg.textContent = 'GitLab 사용자 조회 중...';
+    fetch('/api/v1/users/gitlab-mapping' + (q ? ('?search=' + encodeURIComponent(q)) : ''))
+      .then(r => r.json())
+      .then(d => {
+        if (!d.success) { glMapData = []; msg.textContent = d.message || 'GitLab 조회 실패'; renderGlMapping(); return; }
+        glMapData = Array.isArray(d.data) ? d.data : [];
+        const unmapped = glMapData.filter(x => !x.mapped).length;
+        msg.textContent = `총 ${glMapData.length}명 · 미등록 ${unmapped}명`;
+        renderGlMapping();
+      })
+      .catch(() => { glMapData = []; msg.textContent = '조회 중 오류가 발생했습니다.'; renderGlMapping(); });
+  }
+
+  function renderGlMapping() {
+    const onlyUnmapped = document.getElementById('gl-map-unmapped-only').checked;
+    const rows = glMapData.filter(x => !onlyUnmapped || !x.mapped);
+    const tbody = document.getElementById('gl-map-tbody');
+    if (rows.length === 0) {
+      tbody.innerHTML = '<tr><td colspan="4" style="text-align:center;padding:24px;color:var(--muted)">표시할 사용자가 없습니다.</td></tr>';
+      return;
+    }
+    const opts = glDeployUsers.map(u => `<option value="${u.id}">${glEsc(u.name)} (${glEsc(u.role)})</option>`).join('');
+    tbody.innerHTML = rows.map(x => {
+      const gu = glEsc(x.gitlabUsername);
+      const conn = x.mapped
+        ? `<span class="status-badge completed">연결됨: ${glEsc(x.mappedUserName)}</span>
+           <button class="btn-ghost sm" style="color:var(--danger)" onclick="disconnectGl(${x.mappedUserId})">해제</button>`
+        : `<div style="display:flex;gap:6px;align-items:center">
+             <select class="form-select" style="font-size:12px;padding:4px 6px"><option value="">배포시스템 사용자 선택</option>${opts}</select>
+             <button class="btn-ghost sm" onclick="connectGl('${gu}', this)">연결</button>
+           </div>`;
+      return `<tr>
+        <td class="mono" style="font-size:0.82rem">${gu}</td>
+        <td>${glEsc(x.gitlabName)}</td>
+        <td>${x.mapped ? '<span class="status-badge completed">등록</span>' : '<span class="status-badge failed">미등록</span>'}</td>
+        <td onclick="event.stopPropagation()">${conn}</td>
+      </tr>`;
+    }).join('');
+  }
+
+  function connectGl(gitlabUsername, btn) {
+    const sel = btn.parentElement.querySelector('select');
+    const userId = sel.value;
+    if (!userId) { document.getElementById('gl-map-msg').textContent = '연결할 배포시스템 사용자를 선택하세요.'; return; }
+    fetch(`/api/v1/users/${userId}/gitlab-username`, {
+      method: 'POST',
+      headers: Object.assign({ 'Content-Type': 'application/json' }, glCsrf()),
+      body: JSON.stringify({ gitlabUsername })
+    }).then(r => r.json()).then(d => {
+      document.getElementById('gl-map-msg').textContent = d.message || (d.success ? '연결되었습니다.' : '실패');
+      loadGlMapping();
+    }).catch(() => { document.getElementById('gl-map-msg').textContent = '연결 중 오류'; });
+  }
+
+  function disconnectGl(userId) {
+    fetch(`/api/v1/users/${userId}/gitlab-username`, {
+      method: 'POST',
+      headers: Object.assign({ 'Content-Type': 'application/json' }, glCsrf()),
+      body: JSON.stringify({ gitlabUsername: '' })
+    }).then(r => r.json()).then(d => {
+      document.getElementById('gl-map-msg').textContent = d.message || (d.success ? '해제되었습니다.' : '실패');
+      loadGlMapping();
+    }).catch(() => { document.getElementById('gl-map-msg').textContent = '해제 중 오류'; });
+  }
+
+  function openUserModalFromBtn(btn) {
+    openUserModal(btn.dataset.id, btn.dataset.name, btn.dataset.loginid,
+      btn.dataset.role, btn.dataset.active, btn.dataset.gitlabusername, btn.dataset.teamid);
+  }
+
+  function openUserModal(id, name, loginId, role, active, gitlabUsername, teamId) {
+    const isEdit = !!id;
+    document.getElementById('user-modal-title').textContent = isEdit ? '사용자 편집' : '사용자 추가';
+    document.getElementById('user-edit-id').value = id || '';
+    document.getElementById('user-name').value = name || '';
+    document.getElementById('user-loginid').value = loginId || '';
+    document.getElementById('user-loginid').disabled = isEdit;
+    document.getElementById('user-role').value = role || 'DEVELOPER';
+    document.getElementById('user-active').value = (active === false || active === 'false') ? 'false' : 'true';
+    document.getElementById('user-team').value = teamId || '';
+    if (window.DeploySelect) {
+      ['user-role', 'user-active', 'user-team'].forEach(function (id) {
+        window.DeploySelect.sync(document.getElementById(id));
+      });
+    }
+    document.getElementById('user-pw-group').style.display = isEdit ? 'none' : '';
+    const passwordInput = document.getElementById('user-password');
+    passwordInput.value = '';
+    passwordInput.required = !isEdit;
+    document.getElementById('user-gitlab-token').value = '';
+    document.getElementById('user-gitlab-token').dataset.username = gitlabUsername || '';
+    document.getElementById('user-gitlab-search').value = gitlabUsername || '';
+    document.getElementById('user-gitlab-user-list').innerHTML = '';
+    document.getElementById('user-gitlab-test-result').textContent = '';
+    const statusEl = document.getElementById('user-gitlab-status');
+    if (gitlabUsername) {
+      statusEl.textContent = '연동됨: ' + gitlabUsername;
+      statusEl.style.color = 'var(--success)';
+    } else {
+      statusEl.textContent = '미연동';
+      statusEl.style.color = 'var(--muted)';
+    }
+    document.getElementById('user-modal').style.display = 'flex';
+  }
+
+  function closeUserModal() {
+    document.getElementById('user-modal').style.display = 'none';
+  }
+
+  function openResetPasswordModal(btn) {
+    document.getElementById('reset-password-user-id').value = btn.dataset.id;
+    document.getElementById('reset-password-target').textContent = btn.dataset.name + ' 계정';
+    document.getElementById('reset-password-value').value = '';
+    document.getElementById('reset-password-confirm').value = '';
+    document.getElementById('reset-password-modal').style.display = 'flex';
+    document.getElementById('reset-password-value').focus();
+  }
+
+  function closeResetPasswordModal() {
+    document.getElementById('reset-password-value').value = '';
+    document.getElementById('reset-password-confirm').value = '';
+    document.getElementById('reset-password-modal').style.display = 'none';
+  }
+
+  function submitResetPassword() {
+    const id = document.getElementById('reset-password-user-id').value;
+    const temporaryPassword = document.getElementById('reset-password-value').value;
+    const confirm = document.getElementById('reset-password-confirm').value;
+    if (!temporaryPassword || temporaryPassword !== confirm) {
+      showToast('임시 비밀번호와 확인 값이 일치해야 합니다.', 'error');
+      return;
+    }
+    if (temporaryPassword.length < 9 || !/[A-Za-z]/.test(temporaryPassword)
+        || !/[0-9]/.test(temporaryPassword) || !/[^A-Za-z0-9\s]/.test(temporaryPassword)) {
+      showToast('9자 이상, 영문·숫자·특수문자를 포함해 주세요.', 'error');
+      return;
+    }
+    fetch(`/api/v1/users/${id}/reset-password`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', ...glCsrf() },
+      body: JSON.stringify({ temporaryPassword })
+    }).then(r => r.json()).then(data => {
+      if (data.success) {
+        closeResetPasswordModal();
+        showToast(data.message, 'success');
+      } else {
+        showToast(data.message || '비밀번호 재설정에 실패했습니다.', 'error');
+      }
+    }).catch(() => showToast('네트워크 오류가 발생했습니다.', 'error'));
+  }
+
+  function deactivateUser(btn) {
+    const id = btn.dataset.id;
+    const name = btn.dataset.name;
+    openConfirm('사용자 비활성화', `"${name}" 계정을 비활성화하시겠습니까?\n감사 이력은 보존됩니다.`, () => {
+      const csrfToken = document.querySelector('meta[name="_csrf"]').content;
+      const csrfHeader = document.querySelector('meta[name="_csrf_header"]').content;
+      fetch(`/api/v1/users/${id}`, { method: 'DELETE', headers: { [csrfHeader]: csrfToken } })
+        .then(r => r.json())
+        .then(data => {
+          if (data.success) { showToast(data.message, 'success'); navigate('users'); }
+          else showToast(data.message || '처리 실패', 'error');
+        })
+        .catch(() => showToast('네트워크 오류', 'error'));
+    });
+  }
+
+  function toggleUserTokenVisibility() {
+    const inp = document.getElementById('user-gitlab-token');
+    inp.type = inp.type === 'password' ? 'text' : 'password';
+  }
+
+  function testUserGitlabToken() {
+    const id = document.getElementById('user-edit-id').value;
+    const token = document.getElementById('user-gitlab-token').value.trim();
+    const result = document.getElementById('user-gitlab-test-result');
+    if (!token) {
+      result.textContent = '토큰을 입력하세요.';
+      result.style.color = 'var(--danger)';
+      return;
+    }
+
+    const csrfToken = document.querySelector('meta[name="_csrf"]').content;
+    const csrfHeader = document.querySelector('meta[name="_csrf_header"]').content;
+    result.style.color = 'var(--muted)';
+    result.textContent = '확인 중...';
+
+    const url = id ? `/api/v1/users/${id}/test-gitlab-token` : '/api/v1/profile/gitlab-token';
+    const payload = id ? { token } : { token, testOnly: 'true' };
+
+    fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', [csrfHeader]: csrfToken },
+      body: JSON.stringify(payload)
+    })
+      .then(r => r.json())
+      .then(data => {
+        if (data.success) {
+          const info = data.data;
+          const msg = typeof info === 'object' ? info.message : (data.data || '연결 성공');
+          result.style.color = 'var(--success)';
+          result.textContent = '✓ ' + msg;
+          const username = typeof info === 'object' ? info.username : null;
+          if (username) {
+            document.getElementById('user-gitlab-status').textContent = '연동 예정: ' + username;
+            document.getElementById('user-gitlab-status').style.color = 'var(--success)';
+            document.getElementById('user-gitlab-token').dataset.username = username;
+          }
+        } else {
+          result.style.color = 'var(--danger)';
+          result.textContent = '✕ ' + (data.message || '연결 실패');
+        }
+      })
+      .catch(() => {
+        result.style.color = 'var(--danger)';
+        result.textContent = '네트워크 오류';
+      });
+  }
+
+  function searchGitlabUsers() {
+    const search = document.getElementById('user-gitlab-search').value.trim();
+    const list = document.getElementById('user-gitlab-user-list');
+    list.innerHTML = '<div style="font-size:12px;color:var(--muted)">불러오는 중...</div>';
+
+    fetch('/api/v1/users/gitlab-candidates?search=' + encodeURIComponent(search))
+      .then(r => r.json())
+      .then(data => {
+        if (!data.success) {
+          list.innerHTML = '<div style="font-size:12px;color:var(--danger)">' + escapeHtml(data.message || 'GitLab lookup failed.') + '</div>';
+          return;
+        }
+        const users = Array.isArray(data.data) ? data.data : [];
+        if (users.length === 0) {
+          list.innerHTML = '<div style="font-size:12px;color:var(--muted)">No GitLab users found.</div>';
+          return;
+        }
+        list.innerHTML = users.map(u => `
+          <button type="button" class="btn-ghost" style="display:flex;justify-content:space-between;gap:8px;text-align:left;padding:8px"
+                  data-username="${escapeAttr(u.username || '')}"
+                  onclick="selectGitlabUser(this)">
+            <span>
+              <strong>${escapeHtml(u.name || u.username || '')}</strong>
+              <span class="mono" style="font-size:12px;color:var(--muted)">@${escapeHtml(u.username || '')}</span>
+            </span>
+            <span style="font-size:11px;color:var(--muted)">${escapeHtml(u.state || '')}</span>
+          </button>
+        `).join('');
+      })
+      .catch(() => {
+        list.innerHTML = '<div style="font-size:12px;color:var(--danger)">Network error.</div>';
+      });
+  }
+
+  function selectGitlabUser(btn) {
+    const username = btn.dataset.username || '';
+    document.getElementById('user-gitlab-token').dataset.username = username;
+    document.getElementById('user-gitlab-search').value = username;
+    const statusEl = document.getElementById('user-gitlab-status');
+    statusEl.textContent = username ? 'Mapped: ' + username : 'Not mapped';
+    statusEl.style.color = username ? 'var(--success)' : 'var(--muted)';
+    document.getElementById('user-gitlab-user-list').innerHTML = '';
+  }
+
+  function clearGitlabMapping() {
+    document.getElementById('user-gitlab-token').dataset.username = '';
+    document.getElementById('user-gitlab-search').value = '';
+    document.getElementById('user-gitlab-user-list').innerHTML = '';
+    const statusEl = document.getElementById('user-gitlab-status');
+    statusEl.textContent = 'Not mapped';
+    statusEl.style.color = 'var(--muted)';
+  }
+
+  function escapeHtml(value) {
+    return String(value ?? '').replace(/[&<>"']/g, ch => ({
+      '&': '&amp;',
+      '<': '&lt;',
+      '>': '&gt;',
+      '"': '&quot;',
+      "'": '&#39;'
+    }[ch]));
+  }
+
+  function escapeAttr(value) {
+    return escapeHtml(value).replace(/`/g, '&#96;');
+  }
+
+  function submitUserModal() {
+    const id = document.getElementById('user-edit-id').value;
+    const gitlabTokenInput = document.getElementById('user-gitlab-token').value;
+    const gitlabToken = gitlabTokenInput === '' ? null : gitlabTokenInput.trim();
+    const gitlabUsername = document.getElementById('user-gitlab-token').dataset.username || null;
+    const teamVal = document.getElementById('user-team').value;
+    const body = {
+      loginId: document.getElementById('user-loginid').value,
+      name: document.getElementById('user-name').value,
+      role: document.getElementById('user-role').value,
+      active: document.getElementById('user-active').value === 'true',
+      password: document.getElementById('user-password').value || null,
+      teamId: teamVal ? parseInt(teamVal) : null,
+      gitlabToken,
+      gitlabUsername
+    };
+
+    if (!id && !body.password?.trim()) {
+      showToast('초기 비밀번호를 입력해 주세요.', 'error');
+      document.getElementById('user-password').focus();
+      return;
+    }
+
+    if (!body.name || !body.loginId) {
+      showToast('이름과 아이디는 필수입니다.', 'error');
+      return;
+    }
+
+    const csrfToken = document.querySelector('meta[name="_csrf"]').content;
+    const csrfHeader = document.querySelector('meta[name="_csrf_header"]').content;
+    const isEdit = !!id;
+
+    fetch(isEdit ? `/api/v1/users/${id}` : '/api/v1/users', {
+      method: isEdit ? 'PUT' : 'POST',
+      headers: { 'Content-Type': 'application/json', [csrfHeader]: csrfToken },
+      body: JSON.stringify(body)
+    })
+      .then(r => r.json())
+      .then(data => {
+        if (data.success) {
+          showToast(data.message, 'success');
+          closeUserModal();
+          navigate('users');
+        } else {
+          showToast(data.message || '오류가 발생했습니다.', 'error');
+        }
+      })
+      .catch(() => showToast('네트워크 오류가 발생했습니다.', 'error'));
+  }
+  </script>
+
+</th:block>
+</body>
+</html>

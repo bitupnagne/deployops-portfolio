@@ -1,0 +1,306 @@
+<!DOCTYPE html>
+<html xmlns:th="http://www.thymeleaf.org">
+<body>
+<th:block th:fragment="content">
+
+  <div class="page-header">
+    <div>
+      <h1 class="page-title">AI 설정</h1>
+      <p class="page-desc">배포 도우미(Assistant)가 쓸 모델과 기능을 설정합니다.</p>
+    </div>
+    <div class="page-actions">
+      <button class="btn btn-primary" onclick="saveAiSettings()">저장</button>
+    </div>
+  </div>
+
+  <!-- AI 활성화 -->
+  <div class="section-card" style="margin-bottom:20px">
+    <div class="section-header">
+      <div>
+        <h3 class="section-title" style="margin:0">Assistant AI 어시스턴트</h3>
+        <p style="font-size:13px;color:var(--muted);margin:6px 0 0">
+          배포 위험도 분석, 승인자 추천, 변경 요약 기능의 AI 보조 기능을 제공합니다.
+        </p>
+      </div>
+      <div style="display:flex;align-items:center;gap:10px;font-size:14px;font-weight:600">
+        <span>활성화</span>
+        <label class="toggle-switch">
+          <input type="checkbox" id="ai-enabled" th:checked="${aiEnabled}" onchange="toggleAiConfig(this.checked)">
+          <span class="toggle-track"><span class="toggle-thumb"></span></span>
+        </label>
+      </div>
+    </div>
+  </div>
+
+  <div id="ai-config" th:style="${aiEnabled} ? '' : 'opacity:0.4;pointer-events:none;'">
+    <!-- LLM 설정 -->
+    <div class="section-card" style="margin-bottom:20px">
+      <h3 class="section-title">LLM 설정</h3>
+      <div class="form-grid">
+        <div class="form-group">
+          <label class="form-label" for="ai-provider">API 제공사</label>
+          <select class="form-select" id="ai-provider" onchange="switchProvider(this.value)">
+            <option value="anthropic" th:selected="${aiProvider == 'anthropic'}">Anthropic (클라우드)</option>
+            <option value="openai" th:selected="${aiProvider == 'openai'}">OpenAI (클라우드)</option>
+            <option value="ollama" th:selected="${aiProvider == 'ollama'}">Ollama (자가호스팅)</option>
+            <option value="vllm" th:selected="${aiProvider == 'vllm'}">vLLM (자가호스팅)</option>
+          </select>
+        </div>
+        <div class="form-group">
+          <label class="form-label" for="ai-model">모델</label>
+          <input class="form-input mono" id="ai-model" list="ai-model-list" th:value="${aiModel}"
+                 placeholder="예) llama3.1:8b">
+          <datalist id="ai-model-list"></datalist>
+          <p class="form-hint" id="ai-model-hint">자가호스팅은 서버에 로드된 모델명을 그대로 입력하세요.</p>
+        </div>
+        <div class="form-group full">
+          <label class="form-label" for="ai-base-url">Base URL
+            <span style="font-weight:400;color:var(--muted)">(자가호스팅 필수 · 클라우드는 비우면 기본값)</span></label>
+          <input class="form-input mono" id="ai-base-url" th:value="${aiBaseUrl}" placeholder="http://localhost:11434">
+          <p class="form-hint" id="ai-base-hint">Ollama 예: http://HOST:11434 · vLLM 예: http://HOST:8000</p>
+        </div>
+        <div class="form-group full">
+          <label class="form-label">API Key</label>
+          <div class="field-actions">
+            <input class="form-input mono" id="ai-apikey" type="password"
+                   placeholder="API Key 입력">
+            <button class="btn btn-ghost" style="white-space:nowrap"
+                    onclick="togglePassword('ai-apikey', this)">표시</button>
+            <button class="btn btn-ghost" type="button" onclick="clearAiKey()">삭제</button>
+            <button class="btn btn-ghost" style="white-space:nowrap" onclick="testAiConnection()">테스트</button>
+          </div>
+          <span id="ai-apikey-configured" style="font-size:12px;color:var(--muted);margin-top:4px;display:block">등록 여부 확인 중</span>
+          <span id="ai-test-result" style="font-size:12px;color:var(--muted);margin-top:4px;display:block"></span>
+        </div>
+        <div class="form-group">
+          <label class="form-label" for="ai-max-tokens">최대 토큰</label>
+          <input class="form-input" type="number" id="ai-max-tokens" th:value="${aiMaxTokens}" value="2048" min="256" max="8192">
+        </div>
+        <div class="form-group">
+          <label class="form-label" for="ai-temperature">응답 다양성</label>
+          <input class="form-input" type="number" id="ai-temperature" th:value="${aiTemperature}" value="0.3"
+                 min="0" max="1" step="0.1">
+          <p class="form-hint">낮을수록 일관된 응답, 높을수록 창의적인 응답이 나옵니다.<br>
+            Anthropic Opus 4.7 이상(Claude 5 계열 포함)은 이 값을 받지 않아 자동으로 제외됩니다 —
+            응답 성향은 시스템 프롬프트로 조정하세요.</p>
+        </div>
+      </div>
+    </div>
+
+    <!-- 기능 설정 -->
+    <div class="section-card" style="margin-bottom:20px">
+      <h3 class="section-title">기능 설정</h3>
+      <div style="display:flex;flex-direction:column;gap:16px">
+        <div class="ai-setting-row" style="padding:14px;border-radius:8px;background:var(--bg-secondary)">
+          <div>
+            <div style="font-size:14px;font-weight:500">배포 위험도 자동 분석</div>
+            <div style="font-size:12px;color:var(--muted);margin-top:3px">
+              배포 요청 생성 시 변경 내용을 분석해 위험도를 낮음, 보통, 높음으로 자동 평가합니다.
+            </div>
+          </div>
+          <label class="toggle-switch"><input type="checkbox" id="feat-risk" th:checked="${featRisk}"><span class="toggle-track"><span class="toggle-thumb"></span></span></label>
+        </div>
+        <div class="ai-setting-row" style="padding:14px;border-radius:8px;background:var(--bg-secondary)">
+          <div>
+            <div style="font-size:14px;font-weight:500">승인자 자동 추천</div>
+            <div style="font-size:12px;color:var(--muted);margin-top:3px">
+              배포 내용과 변경 이력을 기반으로 적합한 승인자를 추천합니다.
+            </div>
+          </div>
+          <label class="toggle-switch"><input type="checkbox" id="feat-approver" th:checked="${featApprover}"><span class="toggle-track"><span class="toggle-thumb"></span></span></label>
+        </div>
+        <div class="ai-setting-row" style="padding:14px;border-radius:8px;background:var(--bg-secondary)">
+          <div>
+            <div style="font-size:14px;font-weight:500">커밋 변경 요약</div>
+            <div style="font-size:12px;color:var(--muted);margin-top:3px">
+              GitLab 커밋 로그를 요약해 승인자가 변경 내용을 빠르게 파악할 수 있게 합니다.
+            </div>
+          </div>
+          <label class="toggle-switch"><input type="checkbox" id="feat-summary" th:checked="${featSummary}"><span class="toggle-track"><span class="toggle-thumb"></span></span></label>
+        </div>
+        <div class="ai-setting-row" style="padding:14px;border-radius:8px;background:var(--bg-secondary)">
+          <div>
+            <div style="font-size:14px;font-weight:500">배포 실패 원인 진단</div>
+            <div style="font-size:12px;color:var(--muted);margin-top:3px">
+              배포 실패 시 로그를 분석해 원인과 조치 방향을 제안합니다.
+            </div>
+          </div>
+          <label class="toggle-switch"><input type="checkbox" id="feat-diag" th:checked="${featDiag}"><span class="toggle-track"><span class="toggle-thumb"></span></span></label>
+        </div>
+        <div class="ai-setting-row" style="padding:14px;border-radius:8px;background:var(--bg-secondary)">
+          <div>
+            <div style="font-size:14px;font-weight:500">프로젝트 로그 읽기 (챗봇)</div>
+            <div style="font-size:12px;color:var(--muted);margin-top:3px">
+              챗봇이 "○○ 로그 분석해줘" 요청 시 프로젝트에 설정된 로그를 읽어 분석합니다. 끄면 로그를 전혀 읽지 않습니다.
+            </div>
+          </div>
+          <label class="toggle-switch"><input type="checkbox" id="feat-logread" th:checked="${featLogread}"><span class="toggle-track"><span class="toggle-thumb"></span></span></label>
+        </div>
+      </div>
+    </div>
+
+    <!-- 시스템 프롬프트 -->
+    <div class="section-card">
+      <h3 class="section-title">시스템 프롬프트</h3>
+      <p style="font-size:13px;color:var(--muted);margin-bottom:12px">
+        AI 응답의 기본 지침을 설정합니다. 비워 두면 기본값이 사용됩니다.
+      </p>
+      <textarea class="form-textarea" id="ai-system-prompt" rows="6"
+                th:text="${aiSystemPrompt}"
+                placeholder="예) 당신은 금융권 결제 시스템 배포를 담당하는 DevOps 어시스턴트입니다. 배포 위험도를 보수적으로 평가하고, 규제 준수 관점에서 분석하세요."></textarea>
+      <div style="display:flex;justify-content:flex-end;margin-top:8px">
+        <button class="btn btn-ghost" onclick="resetSystemPrompt()">기본값으로 초기화</button>
+      </div>
+    </div>
+  </div>
+
+  <script>
+  function toggleAiConfig(enabled) {
+    document.getElementById('ai-config').style.opacity = enabled ? '1' : '0.4';
+    document.getElementById('ai-config').style.pointerEvents = enabled ? '' : 'none';
+  }
+
+  /* togglePassword 는 app.js 공통 함수 사용 */
+
+  /* 실제 모델에 핑을 보내 연결/모델 응답을 확인 (저장 전 폼 값 기준) */
+  function testAiConnection() {
+    const el = document.getElementById('ai-test-result');
+    el.style.color = 'var(--muted)';
+    el.textContent = '실제 모델에 연결 확인 중...';
+    const body = {
+      provider: document.getElementById('ai-provider').value,
+      baseUrl: document.getElementById('ai-base-url').value.trim(),
+      model: document.getElementById('ai-model').value.trim(),
+      apiKey: document.getElementById('ai-apikey').value,
+      maxTokens: '512',
+      temperature: document.getElementById('ai-temperature').value
+    };
+    fetch('/api/v1/settings/ai/test', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', [_csrfH]: _csrf },
+      body: JSON.stringify(body)
+    })
+      .then(r => r.json())
+      .then(d => {
+        el.style.color = d.success ? 'var(--success)' : 'var(--red)';
+        el.textContent = (d.success ? '✓ ' : '✕ ') + (d.message || d.data || (d.success ? '연결 성공' : '연결 실패'));
+      })
+      .catch(() => { el.style.color = 'var(--red)'; el.textContent = '요청 실패'; });
+  }
+
+  var AI_PRESETS = {
+    anthropic: { base: 'https://api.anthropic.com (기본)', models: ['claude-sonnet-4-6', 'claude-opus-4-6', 'claude-haiku-4-5'],
+                 baseHint: '클라우드 — 비워두면 공식 API를 사용합니다.', modelHint: '드롭다운에서 고르거나 모델명을 입력하세요.' },
+    openai:    { base: 'https://api.openai.com/v1 (기본)', models: ['gpt-4o', 'gpt-4o-mini'],
+                 baseHint: '클라우드 — 비워두면 공식 API를 사용합니다.', modelHint: '드롭다운에서 고르거나 모델명을 입력하세요.' },
+    ollama:    { base: 'http://localhost:11434', models: ['llama3.1:8b', 'qwen2.5:14b', 'gemma2:9b', 'mistral'],
+                 baseHint: 'Ollama 서버 주소. 예: http://192.0.2.10:11434', modelHint: '서버에 pull 된 모델명을 정확히 입력하세요.' },
+    vllm:      { base: 'http://localhost:8000', models: ['Qwen/Qwen2.5-14B-Instruct', 'meta-llama/Llama-3.1-8B-Instruct'],
+                 baseHint: 'vLLM OpenAI 호환 서버 주소. 예: http://192.0.2.10:8000', modelHint: 'vLLM 기동 시 지정한 모델명을 입력하세요.' }
+  };
+
+  function switchProvider(provider) {
+    const p = AI_PRESETS[provider] || AI_PRESETS.ollama;
+    document.getElementById('ai-model-list').innerHTML = p.models.map(m => `<option value="${m}">`).join('');
+    document.getElementById('ai-base-url').placeholder = p.base;
+    document.getElementById('ai-base-hint').textContent = p.baseHint;
+    document.getElementById('ai-model-hint').textContent = p.modelHint;
+  }
+
+  function resetSystemPrompt() {
+    document.getElementById('ai-system-prompt').value = '';
+    showToast('시스템 프롬프트를 초기화했습니다.', 'info');
+  }
+
+  var _csrf = document.querySelector('meta[name="_csrf"]').content;
+  var _csrfH = document.querySelector('meta[name="_csrf_header"]').content;
+  try { localStorage.removeItem('deployops_ai_settings'); } catch (e) {}
+
+  fetch('/api/v1/settings/ai')
+    .then(r => r.json())
+    .then(res => {
+      const d = res.data || {};
+      setAiKeyStatus(!!(d.configuredSecrets || {})['ai.api-key']);
+      if (d['ai.provider']) {
+        document.getElementById('ai-provider').value = d['ai.provider'];
+        switchProvider(d['ai.provider']);
+      }
+      if (d['ai.enabled'] !== undefined) {
+        const enabled = d['ai.enabled'] !== 'false';
+        document.getElementById('ai-enabled').checked = enabled;
+        toggleAiConfig(enabled);
+      }
+      if (d['ai.model']) document.getElementById('ai-model').value = d['ai.model'];
+      if (d['ai.base-url']) document.getElementById('ai-base-url').value = d['ai.base-url'];
+      switchProvider(document.getElementById('ai-provider').value);
+      if (d['ai.max-tokens']) document.getElementById('ai-max-tokens').value = d['ai.max-tokens'];
+      if (d['ai.temperature']) document.getElementById('ai-temperature').value = d['ai.temperature'];
+      if (d['ai.system-prompt']) document.getElementById('ai-system-prompt').value = d['ai.system-prompt'];
+      if (d['feat.risk'] !== undefined) document.getElementById('feat-risk').checked = d['feat.risk'] !== 'false';
+      if (d['feat.approver'] !== undefined) document.getElementById('feat-approver').checked = d['feat.approver'] !== 'false';
+      if (d['feat.summary'] !== undefined) document.getElementById('feat-summary').checked = d['feat.summary'] !== 'false';
+      if (d['feat.diag'] !== undefined) document.getElementById('feat-diag').checked = d['feat.diag'] === 'true';
+      if (d['feat.logread'] !== undefined) document.getElementById('feat-logread').checked = d['feat.logread'] !== 'false';
+    });
+
+  function setAiKeyStatus(configured) {
+    document.getElementById('ai-apikey-configured').textContent = configured
+      ? '등록됨 · 비워 두면 기존 값 유지'
+      : '미등록 · 새 값을 입력해 주세요';
+  }
+
+  function clearAiKey() {
+    fetch('/api/v1/settings/ai', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', [_csrfH]: _csrf },
+      body: JSON.stringify({ 'ai.api-key': null })
+    }).then(r => r.json()).then(d => {
+      if (!d.success) throw new Error('삭제 실패');
+      document.getElementById('ai-apikey').value = '';
+      setAiKeyStatus(false);
+      showToast('API Key가 삭제되었습니다.', 'success');
+    }).catch(() => showToast('API Key 삭제에 실패했습니다.', 'error'));
+  }
+
+  function saveAiSettings() {
+    const vals = {
+      'ai.enabled': String(document.getElementById('ai-enabled').checked),
+      'ai.provider': document.getElementById('ai-provider').value,
+      'ai.model': document.getElementById('ai-model').value.trim(),
+      'ai.base-url': document.getElementById('ai-base-url').value.trim(),
+      'ai.max-tokens': document.getElementById('ai-max-tokens').value,
+      'ai.temperature': document.getElementById('ai-temperature').value,
+      'ai.system-prompt': document.getElementById('ai-system-prompt').value,
+      'feat.risk': String(document.getElementById('feat-risk').checked),
+      'feat.approver': String(document.getElementById('feat-approver').checked),
+      'feat.summary': String(document.getElementById('feat-summary').checked),
+      'feat.diag': String(document.getElementById('feat-diag').checked),
+      'feat.logread': String(document.getElementById('feat-logread').checked)
+    };
+    const apiKey = document.getElementById('ai-apikey').value.trim();
+    if (apiKey) {
+      vals['ai.api-key'] = apiKey;
+    }
+
+    fetch('/api/v1/settings/ai', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', [_csrfH]: _csrf },
+      body: JSON.stringify(vals)
+    })
+    .then(r => r.json())
+    .then(d => {
+      if (!d.success) throw new Error('저장 실패');
+      if (apiKey) {
+        document.getElementById('ai-apikey').value = '';
+        setAiKeyStatus(true);
+      }
+      try { localStorage.removeItem('deployops_ai_settings'); } catch (e) {}
+      showToast('AI 설정이 저장되었습니다.', 'success');
+    })
+    .catch(() => showToast('저장에 실패했습니다.', 'error'));
+  }
+  </script>
+
+</th:block>
+</body>
+</html>

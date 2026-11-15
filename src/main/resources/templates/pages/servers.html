@@ -1,0 +1,344 @@
+<!DOCTYPE html>
+<html xmlns:th="http://www.thymeleaf.org">
+<body>
+<th:block th:fragment="content" th:with="canManageServers=${currentUser != null and (currentUser.role == 'OPERATOR' or currentUser.role == 'SUPER_ADMIN')}">
+
+  <div class="page-header">
+    <div>
+      <h1 class="page-title">서버 관리</h1>
+      <p class="page-desc">등록된 서버를 그룹 구분 없이 한 표로 봅니다.</p>
+    </div>
+    <div class="page-actions">
+      <button class="btn btn-ghost" th:if="${canManageServers}" onclick="checkAllServers()">서버 상태 갱신</button>
+      <button class="btn btn-primary" type="button" th:if="${canManageServers}" onclick="openInfrastructureServerModal()">인프라 서버 추가</button>
+      <a class="btn btn-primary" href="/deploy/server-groups">서버 그룹에서 관리</a>
+    </div>
+  </div>
+
+  <div class="page-help ds-help-summary"><span>배포 대상 서버는 그룹에 속해야 합니다.</span><div class="ds-help" data-ui-help><button class="ds-help-toggle" type="button" data-ui-help-toggle aria-label="서버 등록 위치 도움말" aria-expanded="false"><svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M11 18h2v-2h-2v2zm1-16C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm0 18c-4.41 0-8-3.59-8-8s3.59-8 8-8 8 3.59 8 8-3.59 8-8 8zm0-14c-2.21 0-4 1.79-4 4h2c0-1.1.9-2 2-2s2 .9 2 2c0 2-3 1.75-3 5h2c0-2.25 3-2.5 3-5 0-2.21-1.79-4-4-4z"></path></svg></button><div class="ds-help-panel" id="server-registration-help" data-ui-help-panel hidden aria-label="서버 등록 위치 도움말"><strong class="ds-help-title">서버 등록 위치</strong><div class="ds-help-content"><p>WAS·WEB 서버는 <a href="/deploy/server-groups" style="color:var(--primary);font-weight:600">서버 그룹</a>에서 추가합니다.</p><p>GitLab·Nexus·Runner 등 인프라 서버는 이 화면에서 그룹 없이 추가하고 에이전트를 등록합니다. 등록된 서버는 아래 목록에서 수정·삭제할 수 있습니다.</p></div><div class="ds-help-foot"><button class="btn btn-primary ds-help-close" type="button" data-ui-help-close>닫기</button></div></div></div></div>
+
+  <!-- 서버 그룹 목록 (모달에서 사용) -->
+  <div th:each="sg : ${serverGroups}" th:id="'sg-data-' + ${sg.id}"
+       th:data-id="${sg.id}" th:data-name="${sg.name}" style="display:none"></div>
+
+  <div class="section-card">
+    <div class="filter-bar">
+      <select class="form-select" id="filter-env" style="width:160px">
+        <option value="">전체 환경</option>
+        <option th:each="e : ${environments}" th:value="${e.name()}" th:text="${e.name()}">ENV</option>
+      </select>
+      <select class="form-select" id="filter-status" style="width:160px">
+        <option value="">전체 상태</option>
+        <option value="NORMAL">정상</option>
+        <option value="ERROR">오류</option>
+        <option value="UNKNOWN">미확인</option>
+      </select>
+      <button class="btn btn-ghost" onclick="filterServers()">검색</button>
+    </div>
+
+    <div class="table-wrap" role="region" aria-label="서버 목록 표 — 가로로 스크롤할 수 있습니다" tabindex="0">
+      <table class="data-table" id="server-table">
+        <thead>
+          <tr>
+            <th scope="col">서버명</th><th scope="col">IP 주소</th><th scope="col">환경</th><th scope="col">유형</th><th scope="col">그룹</th>
+            <th scope="col">제어 방식</th><th scope="col">상태</th><th scope="col">최종 확인</th><th scope="col"></th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr th:if="${#lists.isEmpty(servers)}">
+            <td colspan="9" style="text-align:center;padding:32px;color:var(--muted)"><div class="table-empty-content">
+                <p style="margin:0 0 10px">아직 등록된 서버가 없습니다.</p>
+                <button class="btn btn-primary sm" type="button" data-page="server-groups">서버 그룹에서 추가하기</button>
+                <p class="form-hint" style="margin-top:8px" th:if="${canManageServers}">배포할 WAS·WEB 서버는 그룹에 연결하고, 인프라 서버는 상단 버튼에서 추가합니다.</p>
+                <p class="form-hint" style="margin-top:8px" th:unless="${canManageServers}">배포할 WAS·WEB 서버는 그룹에 연결되며, 인프라 서버는 별도로 등록됩니다.</p>
+              </div></td>
+          </tr>
+          <tr th:each="s : ${servers}"
+              th:data-env="${s.environment?.name()}"
+              th:data-status="${s.status?.name()}">
+            <td><strong class="mono" th:text="${s.name}">was01</strong></td>
+            <td class="mono" th:text="${s.ipAddress}">198.18.16.11</td>
+            <td>
+              <span class="env-badge prod" th:if="${s.environment?.name() == 'PROD'}">PROD</span>
+              <span class="env-badge test" th:unless="${s.environment?.name() == 'PROD'}">TEST</span>
+            </td>
+            <td th:text="${s.serverType?.label ?: '-'}">앱 서버</td>
+            <td>
+              <span th:if="${s.serverGroup != null}" th:text="${s.serverGroup.name}">그룹명</span>
+              <!-- 그룹이 없으면 배포 대상이 될 수 없다. '-' 로 두면 그냥 빈 값으로 읽힌다. -->
+              <span th:unless="${s.serverGroup != null}" class="srv-nogroup">그룹 없음</span>
+            </td>
+            <td style="font-size:12px" th:text="${s.agentControlled ? '에이전트' : '등록 전환 필요'}">에이전트</td>
+            <td>
+              <button type="button" class="btn-ghost sm" th:if="${s.agentControlled}"
+                      th:attr="data-agent-server=${s.id},data-agent-name=${s.name},data-agent-admin=${currentUser != null and currentUser.role == 'SUPER_ADMIN'},data-agent-test-allowed=${canManageServers}" onclick="DeployAgent.open(this)">에이전트 관리</button>
+              <span class="status-badge completed" th:if="${s.status?.name() == 'NORMAL'}">정상</span>
+              <span class="status-badge failed" th:if="${s.status?.name() == 'ERROR'}">오류</span>
+              <span class="status-badge"
+                    th:unless="${s.status?.name() == 'NORMAL' or s.status?.name() == 'ERROR'}">미확인</span>
+            </td>
+            <td style="font-size:12px;color:var(--muted)"
+                th:text="${s.lastCheckedAt != null ? #temporals.format(s.lastCheckedAt, 'MM/dd HH:mm') : '-'}">-</td>
+            <td>
+              <button class="btn-ghost sm" th:onclick="'checkServer(' + ${s.id} + ')'">확인</button>
+              <button type="button" class="btn-ghost sm" th:if="${s.serverType?.name() == 'WAS' and currentUser != null and currentUser.role == 'SUPER_ADMIN'}"
+                      th:attr="data-storage-server=${s.id}" onclick="DeployStorage.openServer(this.dataset.storageServer)">허용 저장소</button>
+              <button class="btn-ghost sm edit-server-btn"
+                      th:data-id="${s.id}"
+                      th:data-name="${s.name}"
+                      th:data-ip="${s.ipAddress}"
+                      th:data-env="${s.environment?.name() ?: 'PROD'}"
+                      th:data-type="${s.serverType?.name() ?: 'WAS'}"
+                      th:data-ssh="${s.sshPort}"
+                      th:data-account="${s.deployAccount ?: ''}"
+                      th:data-auth="${s.authType?.name() ?: 'SSH_KEY'}"
+                      th:data-control="${s.controlMode?.name() ?: 'SSH'}"
+                      th:data-path="${s.deployPath ?: ''}"
+                      th:data-order="${s.orderIndex}"
+                      th:data-autostart="${s.autoStart}"
+                      th:data-startup-service="${s.startupService ?: ''}"
+                      th:data-groupid="${s.serverGroup != null ? s.serverGroup.id : ''}"
+                      th:if="${canManageServers}" data-ui-edit-link data-ui-delete-target="#server-modal" onclick="openServerModalFromBtn(this)">수정</button>
+              <button class="btn-ghost sm" style="color:var(--danger)"
+                      th:data-id="${s.id}" th:data-name="${s.name}"
+                      th:if="${canManageServers}" data-ui-delete-source hidden onclick="deleteServer(this)">삭제</button>
+            </td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div class="table-footer">
+      <span class="table-count">총 <strong th:text="${servers != null ? #lists.size(servers) : 0}">0</strong>대</span>
+    </div>
+  </div>
+
+  <!-- 서버 추가/편집 모달 -->
+  <div th:if="${canManageServers}" id="server-modal" class="modal-overlay" style="display:none" data-ui-modal-size="compact" data-ui-edit-modal data-ui-edit-record="#server-edit-id">
+    <div class="modal" style="width:560px" role="dialog" aria-modal="true" aria-labelledby="server-modal-title">
+      <div class="modal-header">
+        <h3 class="modal-title" id="server-modal-title">서버 추가</h3>
+        <button class="modal-close" onclick="closeServerModal()" aria-label="닫기">×</button>
+      </div>
+      <div class="modal-body">
+        <input type="hidden" id="server-edit-id">
+        <div class="form-grid">
+          <div class="form-group">
+            <label class="form-label" for="server-name">서버명 <span class="req">*</span></label>
+            <input class="form-input mono" id="server-name" placeholder="was01">
+          </div>
+          <div class="form-group">
+            <label class="form-label" for="server-ip">IP 주소 <span class="req">*</span></label>
+            <input class="form-input mono" id="server-ip" placeholder="198.18.16.11">
+            <p class="form-hint">일반 운영자는 IPv4·IPv6 주소 또는 localhost를 입력하세요. 추가 승인 그룹 서버의 이동·접속 정보 변경·삭제와 같은 호스트의 별도 등록은 최고 관리자만 가능합니다.</p>
+          </div>
+          <div class="form-group">
+            <label class="form-label" for="server-env">환경</label>
+            <select class="form-select" id="server-env">
+              <option value="PROD">PROD</option>
+              <option value="TEST">TEST</option>
+            </select>
+          </div>
+          <div class="form-group">
+            <label class="form-label" for="server-type">유형</label>
+            <select class="form-select" id="server-type">
+              <option value="DEPLOY">DEPLOY</option>
+              <option value="GITLAB">GITLAB</option>
+              <option value="NEXUS">NEXUS</option>
+              <option value="RUNNER">GitLab Runner</option>
+              <option value="WAS">WAS</option>
+              <option value="WEB">WEB</option>
+              <option value="DB">DB</option>
+              <option value="BATCH">BATCH</option>
+            </select>
+          </div>
+          <div class="form-group full">
+            <label class="form-label" for="server-control">제어 방식</label>
+            <select class="form-select" id="server-control" onchange="DeployAgent.toggleFields('server')"><option value="AGENT">에이전트</option></select>
+            <p class="form-hint">서버에 에이전트를 설치한 뒤 등록을 승인하고 연결·준비 검사를 진행합니다. 기존 서버도 저장 후 에이전트 등록이 필요합니다.</p>
+          </div>
+
+<div class="form-group">
+            <label class="form-label" for="server-group">그룹</label>
+            <select class="form-select" id="server-group">
+              <option value="">그룹 없음</option>
+              <option th:each="sg : ${serverGroups}"
+                      th:value="${sg.id}"
+                      th:text="${sg.name}">그룹</option>
+            </select>
+          </div>
+          <div class="form-group full">
+            <label class="form-label" for="server-path">배포 경로</label>
+            <input class="form-input mono" id="server-path" placeholder="/opt/apps/service">
+          </div>
+          <div class="form-group">
+            <label class="form-label" for="server-order">순서 인덱스</label>
+            <input class="form-input" type="number" id="server-order" value="1" min="1">
+          </div>
+          <div class="form-group">
+            <label class="form-label" for="server-startup-service">부팅 시 기동할 systemd 서비스</label>
+            <input class="form-input mono" id="server-startup-service" placeholder="myapp.service">
+            <p class="form-hint">허용된 .service 유닛만 등록할 수 있습니다.</p>
+          </div>
+          <div class="form-group full">
+            <label class="toggle-switch"><input type="checkbox" id="server-auto-start"><span class="toggle-track"><span class="toggle-thumb"></span></span></label>
+            <span class="form-label" style="margin-left:10px">Deploy System 기동 후 자동 기동</span>
+          </div>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-ghost" onclick="closeServerModal()" data-ui-edit-cancel>취소</button>
+        <button class="btn btn-primary" onclick="submitServerModal()" data-ui-edit-save>저장</button>
+      </div>
+    </div>
+  </div>
+
+  <script>
+  function filterServers() {
+    const env = document.getElementById('filter-env').value;
+    const status = document.getElementById('filter-status').value;
+    document.querySelectorAll('#server-table tbody tr[data-env]').forEach(row => {
+      const envMatch = !env || row.dataset.env === env;
+      const statusMatch = !status || row.dataset.status === status;
+      row.style.display = (envMatch && statusMatch) ? '' : 'none';
+    });
+  }
+
+  function checkServer(id) {
+    showToast('서버 상태 확인 중...', 'info');
+    const csrfToken  = document.querySelector('meta[name="_csrf"]').content;
+    const csrfHeader = document.querySelector('meta[name="_csrf_header"]').content;
+    fetch(`/api/v1/servers/${id}/check`, {
+      method: 'POST', headers: { [csrfHeader]: csrfToken }
+    })
+    .then(r => r.json())
+    .then(data => {
+      const d = data.data || data;
+      const ok = d.reachable === true || d.status === 'NORMAL';
+      showToast(`${d.name || '서버'}: ${d.message || (ok ? '연결 확인' : '연결 또는 준비 검사 실패')}`, ok ? 'success' : 'error');
+      setTimeout(() => navigate('servers'), 800);
+    })
+    .catch(() => showToast('확인 요청 실패', 'error'));
+  }
+
+  function checkAllServers() {
+    showToast('전체 서버 상태 확인 중...', 'info');
+    const csrfToken  = document.querySelector('meta[name="_csrf"]').content;
+    const csrfHeader = document.querySelector('meta[name="_csrf_header"]').content;
+    fetch('/api/v1/servers/check-all', {
+      method: 'POST', headers: { [csrfHeader]: csrfToken }
+    })
+    .then(r => r.json())
+    .then(data => {
+      const list = data.data || [];
+      const ok   = list.filter(s => s.reachable).length;
+      const fail = list.length - ok;
+      showToast(`확인 완료: 정상 ${ok}대 / 오류 ${fail}대`, fail > 0 ? 'error' : 'success');
+      setTimeout(() => navigate('servers'), 800);
+    })
+    .catch(() => showToast('확인 요청 실패', 'error'));
+  }
+
+  function openServerModalFromBtn(btn) {
+    openServerModal(btn.dataset.id, btn.dataset.name, btn.dataset.ip,
+                    btn.dataset.env, btn.dataset.type, btn.dataset.ssh,
+                    btn.dataset.account, btn.dataset.auth, btn.dataset.path,
+                    btn.dataset.order, btn.dataset.groupid, btn.dataset.autostart, btn.dataset.startupService, btn.dataset.control);
+  }
+
+  function openInfrastructureServerModal() {
+    openServerModal(null, null, null, null, 'GITLAB');
+  }
+
+  function openServerModal(id, name, ip, env, type, sshPort, account, auth, path, order, groupId, autoStart, startupService, controlMode) {
+    const isEdit = !!id;
+    document.getElementById('server-modal-title').textContent = isEdit ? '서버 편집' : '서버 추가';
+    document.getElementById('server-edit-id').value = id || '';
+    document.getElementById('server-name').value = name || '';
+    document.getElementById('server-ip').value = ip || '';
+    setServerModalSelect('server-env', env || 'PROD');
+    setServerModalSelect('server-type', type || 'WAS');
+    setServerModalSelect('server-control', 'AGENT');
+    DeployAgent.toggleFields('server');
+    document.getElementById('server-path').value = path || '';
+    document.getElementById('server-order').value = order || 1;
+    setServerModalSelect('server-group', groupId && groupId !== 'null' ? groupId : '');
+    document.getElementById('server-auto-start').checked = autoStart === 'true';
+    document.getElementById('server-startup-service').value = startupService || '';
+    document.getElementById('server-modal').style.display = 'flex';
+  }
+
+  function setServerModalSelect(id, value) {
+    const select = document.getElementById(id);
+    select.value = value;
+    if (window.DeploySelect) window.DeploySelect.sync(select);
+  }
+
+  function closeServerModal() {
+    document.getElementById('server-modal').style.display = 'none';
+  }
+
+  function deleteServer(btn) {
+    const id   = btn.dataset.id;
+    const name = btn.dataset.name;
+    openConfirm('서버 삭제', `"${name}" 서버를 삭제하시겠습니까?`, () => {
+      const csrfToken  = document.querySelector('meta[name="_csrf"]').content;
+      const csrfHeader = document.querySelector('meta[name="_csrf_header"]').content;
+      fetch(`/api/v1/servers/${id}`, {
+        method: 'DELETE', headers: { [csrfHeader]: csrfToken }
+      })
+      .then(r => r.json())
+      // 막혔으면 무엇이 걸려 있는지 바로 펼친다 — 문장만 읽고 어디를 볼지 찾게 두지 않는다.
+      .then(data => handleDeleteResult(data, {
+        type: 'server', id: id,
+        onDone: () => navigate('servers'),
+        retry: () => deleteServer(btn)
+      }))
+      .catch(() => showToast('네트워크 오류', 'error'));
+    });
+  }
+
+  function submitServerModal() {
+    const id = document.getElementById('server-edit-id').value;
+    const body = {
+      name: document.getElementById('server-name').value,
+      ipAddress: document.getElementById('server-ip').value,
+      environment: document.getElementById('server-env').value,
+      serverType: document.getElementById('server-type').value,
+      controlMode: document.getElementById('server-control').value,
+      deployPath: document.getElementById('server-path').value || null,
+      orderIndex: parseInt(document.getElementById('server-order').value) || 1,
+      serverGroupId: document.getElementById('server-group').value || null,
+      autoStart: document.getElementById('server-auto-start').checked,
+      startupService: document.getElementById('server-startup-service').value.trim() || null
+    };
+
+    if (!body.name || !body.ipAddress) {
+      showToast('서버명과 IP는 필수입니다.', 'error'); return;
+    }
+
+    const csrfToken = document.querySelector('meta[name="_csrf"]').content;
+    const csrfHeader = document.querySelector('meta[name="_csrf_header"]').content;
+
+    fetch(id ? `/api/v1/servers/${id}` : '/api/v1/servers', {
+      method: id ? 'PUT' : 'POST',
+      headers: { 'Content-Type': 'application/json', [csrfHeader]: csrfToken },
+      body: JSON.stringify(body)
+    })
+    .then(r => r.json())
+    .then(data => {
+      if (data.success) {
+        showToast(data.message, 'success');
+        closeServerModal();
+        navigate('servers');
+      } else {
+        showToast(data.message || '오류가 발생했습니다.', 'error');
+      }
+    })
+    .catch(() => showToast('네트워크 오류가 발생했습니다.', 'error'));
+  }
+  </script>
+
+</th:block>
+</body>
+</html>

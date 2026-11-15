@@ -1,0 +1,157 @@
+<!DOCTYPE html>
+<html xmlns:th="http://www.thymeleaf.org">
+<body>
+<th:block th:fragment="content">
+
+  <div class="page-header audit-page-header">
+    <div>
+      <h1 class="page-title">감사 로그</h1>
+      <p class="page-desc">누가 언제 무엇을 했는지 남긴 기록입니다.</p>
+    </div>
+    <div class="page-actions">
+      <th:block th:if="${currentUser != null and currentUser.role == 'SUPER_ADMIN'}">
+        <span class="status-badge" id="audit-integrity-status">무결성 미확인</span>
+        <button class="btn btn-ghost" onclick="checkAuditIntegrity()">무결성 검사</button>
+      </th:block>
+      <button class="btn btn-ghost" onclick="exportAudit()">현재 페이지 CSV</button>
+    </div>
+  </div>
+
+  <div class="section-card">
+    <div class="filter-bar">
+      <input class="form-input" id="filter-actor" placeholder="행위자 검색" style="width:180px"
+             th:value="${filterActor}">
+      <input class="form-input" id="filter-from" type="date" style="width:160px"
+             th:value="${filterFrom != null and !#strings.isEmpty(filterFrom)} ? ${filterFrom} : ${#temporals.format(#temporals.createNow().minusDays(7), 'yyyy-MM-dd')}">
+      <span style="color:var(--muted);font-size:13px">~</span>
+      <input class="form-input" id="filter-to" type="date" style="width:160px"
+             th:value="${filterTo != null and !#strings.isEmpty(filterTo)} ? ${filterTo} : ${#temporals.format(#temporals.createNow(), 'yyyy-MM-dd')}">
+      <button class="btn btn-ghost" onclick="searchAudit()">검색</button>
+    </div>
+
+    <div class="table-wrap" role="region" aria-label="감사 기록 표 — 가로로 스크롤할 수 있습니다" tabindex="0">
+      <table class="data-table audit-log-table" style="min-width:1280px;table-layout:fixed">
+        <colgroup>
+          <col style="width:140px"><col style="width:120px"><col style="width:220px">
+          <col style="width:220px"><col style="width:360px"><col style="width:90px"><col style="width:130px">
+        </colgroup>
+        <thead>
+          <tr>
+            <th scope="col" style="width:140px">일시</th>
+            <th scope="col">행위자</th>
+            <th scope="col">행위</th>
+            <th scope="col">대상 유형</th>
+            <th scope="col">대상</th>
+            <th scope="col">결과</th>
+            <th scope="col">IP</th>
+          </tr>
+        </thead>
+        <tbody id="audit-table">
+          <tr th:if="${auditLogs == null or auditLogs.isEmpty()}">
+            <td colspan="7" style="text-align:center;padding:40px;color:var(--muted)"><div class="table-empty-content">
+              <p style="margin:0 0 4px">조건에 맞는 기록이 없습니다.</p>
+              <p class="form-hint" style="margin:0">기간이나 수행자 조건을 넓혀 보세요.</p>
+            </div></td>
+          </tr>
+          <tr th:each="log : ${auditLogs}" data-row="1">
+            <td class="mono" style="font-size:12px;white-space:nowrap"
+                th:text="${#temporals.format(log.createdAt, 'MM/dd HH:mm:ss')}">일시</td>
+            <td style="white-space:normal;word-break:normal;overflow-wrap:anywhere"><strong th:text="${log.actor}">행위자</strong></td>
+            <td style="white-space:normal;overflow-wrap:anywhere" th:text="${log.action}">행위</td>
+            <td style="font-size:12px;color:var(--text-secondary)" th:text="${log.targetType ?: '-'}">유형</td>
+            <td class="audit-target" style="font-size:12px;white-space:normal;word-break:normal;overflow-wrap:anywhere"
+                >
+              <span th:if="${log.targetId != null and !#strings.isEmpty(log.targetId)}"
+                    class="mono" style="display:block" th:text="${'대상 ID: ' + log.targetId}">대상 ID</span>
+              <span th:text="${log.targetDesc ?: '-'}">대상 설명</span>
+            </td>
+            <td>
+              <span class="status-badge completed"
+                    th:if="${log.result?.name() == 'SUCCESS'}">성공</span>
+              <span class="status-badge failed"
+                    th:if="${log.result?.name() == 'FAIL'}">실패</span>
+              <span class="status-badge"
+                    th:if="${log.result?.name() == 'UNKNOWN'}">결과 불명</span>
+              <span class="status-badge"
+                    th:unless="${log.result?.name() == 'SUCCESS' or log.result?.name() == 'FAIL' or log.result?.name() == 'UNKNOWN'}"
+                    th:text="${log.result?.name() ?: '-'}">-</span>
+            </td>
+            <td class="mono" style="font-size:12px;color:var(--muted)" th:text="${log.ipAddress ?: '-'}">IP</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div class="table-footer" th:if="${auditLogs != null}">
+      <span class="table-count">
+        총 <strong th:text="${auditLogs.totalElements}">0</strong>건
+      </span>
+      <div style="display:flex;gap:8px" th:if="${auditLogs.totalPages > 1}">
+        <button class="btn-ghost sm"
+                th:disabled="${auditLogs.first}"
+                th:onclick="'navigateAuditPage(' + ${auditLogs.number - 1} + ')'">이전</button>
+        <span style="font-size:13px;color:var(--muted);align-self:center"
+              th:text="${auditLogs.number + 1} + ' / ' + ${auditLogs.totalPages}">1/1</span>
+        <button class="btn-ghost sm"
+                th:disabled="${auditLogs.last}"
+                th:onclick="'navigateAuditPage(' + ${auditLogs.number + 1} + ')'">다음</button>
+      </div>
+    </div>
+  </div>
+
+  <script>
+  function navigateAuditPage(page) {
+    const actor = document.getElementById('filter-actor').value;
+    const from = document.getElementById('filter-from').value;
+    const to = document.getElementById('filter-to').value;
+    navigate('audit', null, { actor, from, to, page: String(page) });
+  }
+
+  function searchAudit() {
+    navigateAuditPage(0);
+  }
+
+  function exportAudit() {
+    const rows = [];
+    rows.push(['일시', '행위자', '행위', '대상유형', '대상', '결과', 'IP']);
+    document.querySelectorAll('#audit-table tr[data-row]').forEach(tr => {
+      rows.push([...tr.querySelectorAll('td')].map(td => '"' + td.textContent.trim().replace(/"/g, '""') + '"'));
+    });
+    if (rows.length <= 1) {
+      showToast('내보낼 데이터가 없습니다.', 'info');
+      return;
+    }
+    const csv = rows.map(r => r.join(',')).join('\n');
+    const blob = new Blob(['\uFEFF' + csv], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = 'audit-log.csv';
+    a.click();
+    URL.revokeObjectURL(url);
+  }
+
+  function checkAuditIntegrity() {
+    const badge = document.getElementById('audit-integrity-status');
+    badge.textContent = '검사 중';
+    fetch('/api/v1/audit/integrity')
+      .then(r => r.json())
+      .then(res => {
+        if (!res.success || !res.data) throw new Error(res.message || '검사 실패');
+        const valid = res.data.valid === true;
+        badge.textContent = valid ? '무결성 정상' : '무결성 오류';
+        badge.className = 'status-badge ' + (valid ? 'completed' : 'failed');
+        showToast(valid ? '감사로그 해시 체인이 정상입니다.' : '감사로그 무결성 오류를 확인했습니다.', valid ? 'success' : 'error');
+      })
+      .catch(error => {
+        badge.textContent = '검사 실패';
+        badge.className = 'status-badge failed';
+        showToast(error.message || '무결성 검사에 실패했습니다.', 'error');
+      });
+  }
+  </script>
+
+</th:block>
+</body>
+</html>
+

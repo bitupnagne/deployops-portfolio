@@ -1,0 +1,212 @@
+<!DOCTYPE html>
+<html xmlns:th="http://www.thymeleaf.org" xmlns:sec="http://www.thymeleaf.org/extras/spring-security">
+<body>
+<th:block th:fragment="content">
+  <link rel="stylesheet" th:href="@{/css/nexus-operations.css}">
+  <div class="nexus-ops" aria-busy="true" data-workspace-state="loading">
+  <div class="page-header"><div><h1 class="page-title">Nexus 운영</h1>
+    <p class="page-desc">저장소와 파일 반입을 관리하고, 백업·복구·이미지 정리를 요청·승인합니다.</p></div></div>
+  <div id="nexus-ops-context" th:data-user-id="${currentUser.id}" th:data-role="${currentUser.role}"></div>
+  <div class="page-help">현재 TEST·PROD 배포 이미지와 같은 저장소의 최근 복구 이력은 삭제되지 않습니다. 요청자와 승인자는 달라야 합니다.</div>
+
+  <div class="section-card nx-storage-card">
+    <div class="section-header"><div><h2 class="section-title">저장공간</h2><p class="section-desc">Nexus blobstore 사용량과 파일시스템 여유 공간입니다.</p></div>
+      <button class="btn btn-ghost" type="button" onclick="loadNexusOpsStorage()">새로고침</button></div>
+    <div id="nexus-ops-storage" class="nx-storage-summary" role="status" aria-live="polite">저장공간 조회 전</div>
+  </div>
+
+  <div class="nx-workspace-nav ds-section-tabs" role="tablist" aria-label="Nexus 운영 작업">
+    <button type="button" class="nx-task-tab" id="nxtab-repositories" role="tab" aria-controls="nxpanel-repositories" data-nx-tab="repositories" disabled sec:authorize="hasRole('SUPER_ADMIN')">저장소</button>
+    <button type="button" class="nx-task-tab" id="nxtab-dependencies" role="tab" aria-controls="nxdependency" data-nx-tab="dependencies" disabled>파일 반입</button>
+    <button type="button" class="nx-task-tab" id="nxtab-cleanup" role="tab" aria-controls="nxpanel-cleanup" data-nx-tab="cleanup" disabled>이미지 정리</button>
+    <button type="button" class="nx-task-tab" id="nxtab-backup" role="tab" aria-controls="nxpanel-backup" data-nx-tab="backup" disabled>백업</button>
+    <button type="button" class="nx-task-tab" id="nxtab-restore" role="tab" aria-controls="nxpanel-restore" data-nx-tab="restore" disabled>격리복원</button>
+    <button type="button" class="nx-task-tab" id="nxtab-promotion" role="tab" aria-controls="nxpanel-promotion" data-nx-tab="promotion" disabled>운영 전환</button>
+  </div>
+
+  <div class="section-card nx-workspace-state" role="status" aria-live="polite">
+    <div class="nx-workspace-placeholder" aria-hidden="true"><span></span><span></span><span></span></div>
+    <p data-nx-workspace-message>Nexus 운영 화면을 준비하고 있습니다.</p>
+    <button class="btn btn-ghost" type="button" data-nx-workspace-retry hidden onclick="location.reload()">다시 불러오기</button>
+  </div>
+  <script>
+  (() => {
+    const root = document.currentScript.closest('.nexus-ops');
+    function cleanup() {
+      window.removeEventListener('error', failed, true);
+      window.removeEventListener('deploy:page-leave', cleanup);
+      window.removeEventListener('pagehide', cleanup);
+      root.removeEventListener('nexus:workspace-ready', cleanup);
+    }
+    function failed(event) {
+      if (!root.isConnected) { cleanup(); return; }
+      if (!event.target?.hasAttribute?.('data-nx-workspace-script') || !root.contains(event.target)) return;
+      root.dataset.workspaceState = 'error';
+      root.setAttribute('aria-busy', 'false');
+      root.querySelector('[data-nx-workspace-message]').textContent = '화면을 불러오지 못했습니다. 연결 상태를 확인하고 다시 불러오세요.';
+      root.querySelector('[data-nx-workspace-retry]').hidden = false;
+      cleanup();
+    }
+    window.addEventListener('error', failed, true);
+    window.addEventListener('deploy:page-leave', cleanup);
+    window.addEventListener('pagehide', cleanup);
+    root.addEventListener('nexus:workspace-ready', cleanup);
+  })();
+  </script>
+
+  <div class="section-card nx-task-panel" id="nxpanel-repositories" data-nx-panel="repositories" role="tabpanel" aria-labelledby="nxtab-repositories" tabindex="0" hidden sec:authorize="hasRole('SUPER_ADMIN')">
+    <div class="section-header"><div><h2 class="section-title">저장소 조회·생성</h2>
+      <p class="section-desc">프로젝트 등록이나 GitLab 연동 없이 저장된 Nexus 연동 설정으로 저장소를 조회하고 hosted 저장소를 만듭니다.</p></div></div>
+    <div class="form-grid">
+      <div class="form-group"><label class="form-label" for="nxop-repository-format">저장소 형식</label>
+        <select class="form-select" id="nxop-repository-format" data-no-custom-select onchange="document.getElementById('nxop-selected-repository').value = ''">
+          <option value="maven2">Maven · RELEASE / SNAPSHOT</option>
+          <option value="docker">Docker</option>
+          <option value="raw">RAW · 일반 파일</option>
+        </select></div>
+      <div class="form-group"><label class="form-label" for="nxop-selected-repository">확인한 저장소 이름</label>
+        <input class="form-input mono" id="nxop-selected-repository" readonly placeholder="목록에서 저장소를 선택하세요."></div>
+    </div>
+    <button class="btn btn-primary" type="button" onclick="nxOpen('nxop-selected-repository', document.getElementById('nxop-repository-format').value, 'manage')">저장소 목록·만들기</button>
+    <p class="form-hint">생성은 확인 후 Nexus에 바로 반영됩니다. Maven 버전 정책은 만들기 화면에서 선택합니다. Docker는 저장된 HTTP 커넥터 포트만 사용할 수 있습니다.</p>
+  </div>
+
+  <div class="section-card nx-task-panel" id="nxdependency" data-nx-panel="dependencies" role="tabpanel" aria-labelledby="nxtab-dependencies" tabindex="0" hidden>
+    <div class="section-header"><div><h2 class="section-title">프로젝트 의존성 저장소 · 파일 반입</h2>
+      <p class="section-desc">공용 저장소를 프로젝트별 경로로 나누거나 별도 hosted 저장소를 연결합니다. Docker 이미지는 프로젝트의 이미지 경로와 CI push를 사용합니다.</p></div></div>
+    <h3 class="nx-step-title">1. 프로젝트 저장소 연결</h3>
+    <div class="form-grid">
+      <div class="form-group"><label class="form-label" for="nxd-project">프로젝트</label><select id="nxd-project" class="form-select" data-no-custom-select><option value="">선택</option><option th:each="project : ${projects}" th:value="${project.id}" th:text="${project.name}"></option></select></div>
+      <div class="form-group"><label class="form-label" for="nxd-format">파일 형식</label><select id="nxd-format" class="form-select" data-no-custom-select><option value="maven2">Maven2</option><option value="raw">RAW</option></select></div>
+      <div class="form-group"><label class="form-label" for="nxd-repository">Hosted 저장소</label><input id="nxd-repository" class="form-input" list="nxd-repositories"><datalist id="nxd-repositories"></datalist><button class="btn btn-ghost" id="nxd-list" type="button">저장소 조회</button></div>
+      <div class="form-group"><label class="form-label" for="nxd-namespace">프로젝트 경로 (선택)</label><input id="nxd-namespace" class="form-input" placeholder="com/company/payments 또는 payments"></div>
+    </div>
+    <button type="button" class="btn btn-primary" id="nxd-save">연결 저장</button>
+    <p class="form-hint">반입 저장소는 재배포 금지(Disable redeploy / ALLOW_ONCE)로 설정해야 합니다. Maven RELEASE와 변경하지 않는 RAW 파일을 지원합니다. SNAPSHOT·MIXED 및 기존 메타데이터 갱신은 별도 배포 절차를 사용하세요. Maven은 groupId 경로를 유지하며 지정한 프로젝트 경로 아래 좌표만 반입합니다. RAW는 프로젝트 경로를 파일 앞에 붙입니다. npm은 npm publish를 사용합니다.</p>
+    <details style="margin-top:16px" id="nxd-build-panel">
+      <summary>반입한 Maven 라이브러리를 프로젝트 CI 빌드에 연결</summary>
+      <p class="form-hint">기존 공용 저장소를 수정하지 않고 프로젝트 전용 group에 반입 저장소와 기존 저장소를 묶습니다. 승인된 Maven CI 템플릿의 <code>--settings "$MAVEN_SETTINGS_FILE"</code> 경로로 사용됩니다. RAW·npm은 이 연결을 지원하지 않습니다.</p>
+      <div class="form-grid">
+        <div class="form-group"><label class="form-label" for="nxd-build-common">기존 Maven hosted / group</label><select id="nxd-build-common" class="form-select" data-no-custom-select><option value="">먼저 연결 조회</option></select></div>
+        <div class="form-group"><label class="form-label" for="nxd-build-reason">변경 사유</label><input id="nxd-build-reason" class="form-input" maxlength="200" placeholder="프로젝트 의존성 반입 저장소를 CI에 연결"></div>
+      </div>
+      <div style="display:flex;gap:8px;flex-wrap:wrap;margin:12px 0">
+        <button type="button" class="btn btn-ghost" id="nxd-build-load">연결 조회</button>
+        <button type="button" class="btn btn-ghost" id="nxd-build-preview">Maven 설정 미리보기</button>
+        <button type="button" class="btn btn-primary" id="nxd-build-apply">전용 group 준비 · CI File 설정 적용</button>
+        <button type="button" class="btn btn-ghost" id="nxd-build-verify">실제 연결 확인</button>
+      </div>
+      <p class="form-hint">NEXUS_MAVEN_USER·NEXUS_MAVEN_PASSWORD는 프로젝트 CI 변수 화면에서 읽기 권한 계정으로 등록하세요. 암호는 아래 XML에 포함하지 않습니다. 기존 MAVEN_SETTINGS_FILE은 적용 확인 후 전체 교체됩니다. 외부 proxy를 포함한 기존 group은 폐쇄망에서 모든 의존성을 제공하지 못할 수 있습니다.</p>
+      <pre id="nxd-build-xml" style="white-space:pre-wrap;overflow-wrap:anywhere;max-height:280px;overflow:auto" aria-label="생성할 Maven settings.xml"></pre>
+      <p id="nxd-build-status" role="status" aria-live="polite">연결 준비와 파이프라인 실제 빌드 성공은 별도로 확인합니다.</p>
+    </details>
+    <h3 class="nx-step-title">2. 반입할 파일 선택</h3>
+    <div class="form-grid">
+      <div class="form-group"><label class="form-label" for="nxd-prefix">선택 파일 앞의 상대 경로</label><input class="form-input" id="nxd-prefix" placeholder="Maven 예: org/example/library/1.0.0"></div>
+      <div class="form-group"><label class="form-label" for="nxd-files">파일 선택 (여러 개 가능)</label><input id="nxd-files" type="file" multiple></div>
+      <div class="form-group"><label class="form-label" for="nxd-folder">또는 저장소 폴더 선택</label><input id="nxd-folder" type="file" webkitdirectory multiple></div>
+    </div>
+    <p class="form-hint">폴더 선택 시 최상위 폴더 이름을 제외한 상대 경로를 유지합니다. Maven은 JAR만이 아니라 해당 POM·메타데이터도 함께 반입하세요. ZIP을 자동 해제하거나 누락 의존성을 생성하지 않습니다. 전체 파일 크기 제한은 없으며 전송은 작은 청크로 나눕니다. 서버 임시 디스크와 Nexus에 실제 파일을 저장할 공간은 필요합니다.</p>
+    <h3 class="nx-step-title">3. 전송 및 등록 결과 확인</h3>
+    <div class="nx-actions"><button type="button" class="btn btn-primary" id="nxd-start">선택 파일 전송·등록</button><button type="button" class="btn btn-ghost" id="nxd-pause">전송 일시정지</button><button type="button" class="btn btn-ghost" id="nxd-refresh">이력 새로고침</button></div>
+    <p class="form-hint">새로고침 후 같은 파일을 다시 선택하면 미완료 파일의 기존 내용을 확인하고 이어서 전송합니다. 파일 전송 100%와 Nexus 등록 완료는 별도입니다. 등록 중 취소하면 결과 확인이 필요할 수 있으며 원격 파일을 자동 삭제하지 않습니다.</p>
+    <p id="nxd-selection-summary" role="status" aria-live="polite"></p>
+    <p id="nxd-message" role="status" aria-live="polite"></p>
+    <div class="table-wrap" tabindex="0" role="region" aria-label="Nexus 작업 이력 표"><table class="data-table"><thead><tr><th scope="col">파일 경로</th><th scope="col">브라우저 → 서버</th><th scope="col">서버 → Nexus</th><th scope="col">등록 결과</th><th scope="col">작업</th></tr></thead><tbody id="nxd-rows"><tr><td colspan="5">프로젝트를 선택하세요.</td></tr></tbody></table></div>
+  </div>
+  <script th:src="@{/js/nexus-dependencies.js}" data-nx-workspace-script defer></script>
+
+
+  <div class="section-card nx-task-panel" id="nxpanel-cleanup" data-nx-panel="cleanup" role="tabpanel" aria-labelledby="nxtab-cleanup" tabindex="0" hidden>
+    <div class="section-header"><div><h2 class="section-title">이미지 정리 승인</h2>
+      <p class="section-desc">태그의 registry·repository·digest를 요청 시점에 고정하고 승인 시 다시 대조합니다.</p></div></div>
+    <div sec:authorize="hasAnyRole('OPERATOR','SUPER_ADMIN')">
+      <div class="form-grid">
+        <div class="form-group"><label class="form-label" for="nxop-project">프로젝트</label>
+          <select class="form-select" id="nxop-project"><option value="">선택</option>
+            <option th:each="project : ${projects}" th:value="${project.id}" th:text="${project.name + ' (#' + project.id + ')'}">프로젝트</option>
+          </select></div>
+        <div class="form-group"><label class="form-label" for="nxop-tag">삭제할 이미지 태그</label>
+          <input class="form-input mono" id="nxop-tag" maxlength="255"></div>
+        <div class="form-group full"><label class="form-label" for="nxop-reason">정리 사유</label>
+          <input class="form-input" id="nxop-reason" maxlength="1000"></div>
+      </div>
+      <button class="btn btn-primary" type="button" onclick="requestNexusOpsCleanup()">정리 승인 요청</button>
+    </div>
+    <div class="table-wrap" tabindex="0" role="region" aria-label="Nexus 작업 이력 표" style="margin-top:16px"><table class="data-table">
+      <thead><tr><th scope="col">프로젝트</th><th scope="col">저장소 / 태그 / digest</th><th scope="col">사유</th><th scope="col">요청자 / 상태</th><th scope="col">작업</th></tr></thead>
+      <tbody id="nxop-body"><tr><td colspan="5" style="text-align:center">불러오는 중…</td></tr></tbody>
+    </table></div>
+  </div>
+
+  <div class="section-card nx-task-panel" id="nxpanel-backup" data-nx-panel="backup" role="tabpanel" aria-labelledby="nxtab-backup" tabindex="0" hidden>
+    <div class="section-header"><div><h2 class="section-title">Nexus 백업</h2>
+      <p class="section-desc">백업 중 Nexus가 잠시 중지됩니다. DB·파일 blob·암호화 키를 함께 보관한 뒤 원래 실행 상태를 복구합니다.</p></div>
+      <button class="btn btn-ghost" type="button" id="nxbackup-refresh">새로고침</button></div>
+    <p class="notice-box">요청자와 승인자는 달라야 합니다. 외부 GitLab·CLI 게시 작업을 중지한 유지보수 창에서 승인하세요. 완료는 백업과 원본 상태 복구를 뜻하며, 격리 복원 검증 완료를 뜻하지 않습니다. 실행 중 취소·자동 재실행은 제공하지 않습니다.</p>
+    <p class="form-hint nx-setup-hint">처음 설치한 서버에서 실행기가 미준비이면 demo-deploy의 대화형 설치기에서 <b>11. 백업·복구 준비 → 1. Nexus 준비</b>를 진행한 뒤 새로고침하세요.</p>
+    <div id="nxbackup-ready" role="status">백업 실행기 준비 상태 조회 전</div>
+    <label class="form-label"><input type="checkbox" id="nxbackup-external"> 외부 이미지 게시·저장소 변경 작업 중지를 확인했습니다.</label>
+    <div sec:authorize="hasAnyRole('OPERATOR','SUPER_ADMIN')" class="form-group">
+      <label class="form-label" for="nxbackup-reason">백업 사유</label>
+      <input class="form-input" id="nxbackup-reason" maxlength="1000">
+      <button class="btn btn-primary" type="button" id="nxbackup-request">백업 승인 요청</button>
+    </div>
+    <div id="nxbackup-error" role="status" aria-live="polite"></div>
+    <div class="table-wrap nexus-backup-table" tabindex="0" role="region" aria-label="백업 이력 표"><table class="data-table"><thead><tr><th scope="col">요청 / 사유</th><th scope="col">요청자 / 승인자</th><th scope="col">상태 / 단계</th><th scope="col">백업 결과</th><th scope="col">작업</th></tr></thead>
+      <tbody id="nxbackup-body"><tr><td colspan="5">조회 전</td></tr></tbody></table></div>
+  </div>
+  <div class="section-card nx-task-panel" id="nxpanel-restore" data-nx-panel="restore" role="tabpanel" aria-labelledby="nxtab-restore" tabindex="0" hidden>
+    <div class="section-header"><div><h2 class="section-title">Nexus 격리복원</h2>
+      <p class="section-desc">완료 백업 행에서 격리복원을 신청합니다. 요청자와 다른 승인자가 승인하면 root 실행기가 새 clone을 만듭니다. 미확정 요청은 실행 전 실패 상태 또는 이미 생성된 clone의 준비 상태를 별도로 확인할 수 있습니다. 재확인은 복원을 재실행하지 않으며 정상 GUI의 여섯 항목 확인을 대신하지 않습니다.</p></div></div>
+    <p class="notice-box">원본과 기존 clone을 덮어쓰지 않습니다. 건강 준비는 기능검증 완료가 아닙니다. 미확정 실행은 재실행·자동 정리하지 않으며 차단을 유지합니다. 운영자 확인은 정상 Nexus GUI의 수동 확인 기록입니다.</p>
+    <div class="nx-actions"><button type="button" class="btn btn-ghost" data-nx-go="backup">백업 이력에서 복원 신청</button></div>
+    <div id="nxrestore-ready" role="status">실행기 준비 상태 조회 전</div>
+    <div id="nxrestore-error" role="status" aria-live="polite"></div>
+    <div class="table-wrap nexus-restore-table" tabindex="0" role="region" aria-label="복원 및 운영 전환 이력 표"><table class="data-table"><thead><tr><th scope="col">복원 / 백업 / 사유</th><th scope="col">요청자 / 승인자</th><th scope="col">상태</th><th scope="col">식별 / 결과</th><th scope="col">작업</th></tr></thead><tbody id="nxrestore-body"><tr><td colspan="5">조회 전</td></tr></tbody></table></div>
+    <div id="nxrestore-detail" aria-live="polite"></div>
+  </div>
+  <div class="section-card nx-task-panel" id="nxpanel-promotion" data-nx-panel="promotion" role="tabpanel" aria-labelledby="nxtab-promotion" tabindex="0" hidden>
+    <div class="section-header"><div><h2 class="section-title">복원본 운영 전환</h2>
+      <p class="section-desc">정상 Nexus 화면에서 기능·자료를 확인한 복원본을 기존 운영 접속점으로 전환합니다. 전환 전 컨테이너·볼륨·키는 복구용으로 보존합니다.</p></div>
+      <button class="btn btn-ghost" type="button" id="nxpromotion-refresh">새로고침</button></div>
+    <p class="notice-box">요청자와 승인자는 달라야 합니다. 외부 GitLab Runner·CLI 게시 작업을 중지한 유지보수 창에서 승인하세요. 백업 이후 저장한 자료·설정은 복원본에 포함되지 않습니다. 결과가 미확정이면 실행을 반복하지 말고 표시된 컨테이너와 실행기 결과를 확인하세요.</p>
+    <p class="section-desc">운영 전환이 완료되면 기존 격리 복원본 컨테이너는 중지됩니다. 위 복원 이력의 내부 bridge 주소 대신, 설정된 일반 Nexus 접속 주소와 아래 운영 컨테이너 식별 정보를 사용하세요.</p>
+    <div id="nxpromotion-ready" role="status">운영 전환 실행기 조회 전</div>
+    <label class="form-label"><input type="checkbox" id="nxpromotion-external"> 외부 게시·저장소 변경 작업 중지를 확인했습니다.</label>
+    <div sec:authorize="hasAnyRole('OPERATOR','SUPER_ADMIN')" class="form-grid">
+      <div class="form-group"><label class="form-label" for="nxpromotion-restore">기능 확인한 복원본</label><select class="form-select" id="nxpromotion-restore" data-no-custom-select><option value="">선택</option></select></div>
+      <div class="form-group"><label class="form-label" for="nxpromotion-reason">운영 전환 사유</label><input class="form-input" id="nxpromotion-reason" maxlength="1000"></div>
+      <button class="btn btn-primary" id="nxpromotion-request" type="button">운영 전환 승인 요청</button>
+    </div>
+    <div id="nxpromotion-error" role="status" aria-live="polite"></div>
+    <div class="table-wrap nexus-restore-table" tabindex="0" role="region" aria-label="복원 및 운영 전환 이력 표"><table class="data-table"><thead><tr><th scope="col">요청 / 복원본 / 사유</th><th scope="col">요청자 / 승인자</th><th scope="col">상태</th><th scope="col">운영 / 복구용 컨테이너</th><th scope="col">작업</th></tr></thead><tbody id="nxpromotion-body"><tr><td colspan="5">조회 전</td></tr></tbody></table></div>
+    </div>
+  <script th:src="@{/js/nexus-backup.js}" data-nx-workspace-script defer></script>
+  <script th:src="@{/js/nexus-promotion.js}" data-nx-workspace-script defer></script>
+  <script>
+  function nxopHeaders(json) { const t=document.querySelector('meta[name="_csrf"]').content,h=document.querySelector('meta[name="_csrf_header"]').content; return Object.assign({[h]:t},json?{'Content-Type':'application/json'}:{}); }
+  function nxopResult(r) { return r.json().then(b=>{if(!r.ok||!b.success)throw new Error(b.message||'요청 처리에 실패했습니다.');return b;}); }
+  function nxopBytes(v){if(v==null||v==='')return '확인 불가';const n=Number(v);if(!Number.isFinite(n)||n<0)return '확인 불가';const u=['B','KiB','MiB','GiB','TiB'];let s=n,i=0;while(s>=1024&&i<u.length-1){s/=1024;i++;}return `${s.toFixed(i?2:0)} ${u[i]}`;}
+  function loadNexusOpsStorage(){
+    const box=document.getElementById('nexus-ops-storage');box.textContent='저장공간 조회 중…';box.setAttribute('aria-busy','true');
+    fetch('/api/v1/nexus/storage').then(nxopResult).then(result=>{
+      if(!box.isConnected)return;
+      const data=result.data||{},list=document.createElement('dl');list.className='nx-storage-stats';
+      const count=Number(data.blobCount),countText=data.blobCount!=null&&Number.isFinite(count)&&count>=0?count.toLocaleString('ko-KR')+'개':'확인 불가';
+      for(const [label,value] of [ ['Blob 사용량',nxopBytes(data.totalSizeInBytes)],['파일시스템 여유 공간',nxopBytes(data.availableSpaceInBytes)],['저장된 Blob',countText] ]){
+        const cell=document.createElement('div'),term=document.createElement('dt'),desc=document.createElement('dd');term.textContent=label;desc.textContent=value;cell.append(term,desc);list.append(cell);
+      }
+      box.replaceChildren(list);
+    }).catch(error=>{if(box.isConnected)box.textContent='저장공간 조회 실패: '+error.message;}).finally(()=>box.removeAttribute('aria-busy'));
+  }
+  function requestNexusOpsCleanup(){const projectId=Number(document.getElementById('nxop-project').value),tag=document.getElementById('nxop-tag').value.trim(),reason=document.getElementById('nxop-reason').value.trim();if(!projectId||!tag||!reason){showToast('프로젝트, 태그와 사유를 모두 입력하세요.','error');return;}fetch('/api/v1/nexus/cleanup-requests',{method:'POST',headers:nxopHeaders(true),body:JSON.stringify({projectId,tag,reason})}).then(nxopResult).then(r=>{showToast(r.message,'success');loadNexusOpsRequests();}).catch(e=>showToast(e.message,'error'));}
+  function loadNexusOpsRequests(){const body=document.getElementById('nxop-body'),ctx=document.getElementById('nexus-ops-context'),uid=Number(ctx.dataset.userId),role=ctx.dataset.role;fetch('/api/v1/nexus/cleanup-requests').then(nxopResult).then(r=>{body.replaceChildren();const rows=r.data||[];if(!rows.length){const tr=document.createElement('tr'),td=document.createElement('td');td.colSpan=5;td.style.textAlign='center';td.textContent='정리 요청이 없습니다.';tr.appendChild(td);body.appendChild(tr);return;}rows.forEach(row=>{const tr=document.createElement('tr');[row.projectName,`${row.imageRepository||row.repositoryPath}\n${row.tag}\n${row.digest}`,row.reason,`${row.requestedBy||'-'} / ${row.statusLabel||row.status}`].forEach((v,i)=>{const td=document.createElement('td');td.textContent=v||'';if(i===1){td.className='mono';td.style.whiteSpace='pre-line';}tr.appendChild(td);});const td=document.createElement('td');if(row.status==='PENDING'&&(role==='APPROVER'||role==='SUPER_ADMIN')&&Number(row.requestedById)!==uid){const a=document.createElement('button');a.className='btn btn-primary sm';a.type='button';a.textContent='승인·삭제';a.onclick=()=>approveNexusOps(row);const x=document.createElement('button');x.className='btn btn-ghost sm';x.type='button';x.textContent='반려';x.onclick=()=>rejectNexusOps(row.id);td.append(a,document.createTextNode(' '),x);}else td.textContent=row.resultMessage||'-';tr.appendChild(td);body.appendChild(tr);});}).catch(e=>{body.replaceChildren();const tr=document.createElement('tr'),td=document.createElement('td');td.colSpan=5;td.textContent=e.message;tr.appendChild(td);body.appendChild(tr);});}
+  function approveNexusOps(row){openConfirm('Nexus 이미지 삭제 승인',`${row.imageRepository||row.repositoryPath}:${row.tag}\n${row.digest}\n이 대상을 삭제합니다.`,()=>fetch(`/api/v1/nexus/cleanup-requests/${row.id}/approve`,{method:'POST',headers:nxopHeaders(false)}).then(nxopResult).then(r=>{showToast(r.message,'success');loadNexusOpsRequests();}).catch(e=>{showToast(e.message,'error');loadNexusOpsRequests();}));}
+  function rejectNexusOps(id){const reason=window.prompt('반려 사유를 입력하세요.');if(!reason||!reason.trim())return;fetch(`/api/v1/nexus/cleanup-requests/${id}/reject`,{method:'POST',headers:nxopHeaders(true),body:JSON.stringify({reason:reason.trim()})}).then(nxopResult).then(r=>{showToast(r.message,'success');loadNexusOpsRequests();}).catch(e=>showToast(e.message,'error'));}
+  loadNexusOpsStorage(); loadNexusOpsRequests();
+  </script>
+  <script th:src="@{/js/nexus-workspace.js}" data-nx-workspace-script defer></script>
+  </div>
+</th:block>
+</body></html>

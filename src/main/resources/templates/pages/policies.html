@@ -1,0 +1,501 @@
+<!DOCTYPE html>
+<html xmlns:th="http://www.thymeleaf.org">
+<body>
+<th:block th:fragment="content">
+
+  <div class="page-header">
+    <div>
+      <h1 class="page-title">승인 정책</h1>
+      <p class="page-desc">배포 요청에 적용할 승인 정책을 관리합니다.</p>
+    </div>
+    <div class="page-actions">
+      <button class="btn btn-primary" onclick="openPolicyModal()">정책 추가</button>
+    </div>
+  </div>
+
+  <style>
+    .policy-workspace {
+      display: grid;
+      grid-template-columns: minmax(0, 320px) minmax(0, 1fr);
+      gap: 20px;
+      align-items: start;
+      overflow-wrap: anywhere;
+    }
+    .policy-workspace > * { min-width: 0; }
+    @media (max-width: 1100px) {
+      .policy-workspace { grid-template-columns: minmax(0, 1fr); }
+    }
+  </style>
+  <div class="policy-workspace">
+
+    <!-- 정책 목록 -->
+    <div class="section-card" style="padding:0;overflow:hidden">
+      <div style="padding:16px 20px;border-bottom:1px solid var(--border)">
+        <h3 class="section-title" style="margin:0">정책 목록</h3>
+      </div>
+      <ul style="list-style:none;margin:0;padding:0" id="policy-list">
+        <li style="padding:24px;text-align:center;color:var(--muted);font-size:13px" id="policy-list-empty">
+          로딩 중...
+        </li>
+      </ul>
+    </div>
+
+    <!-- 정책 상세 -->
+    <div>
+      <div id="policy-empty" class="section-card" style="padding:48px;text-align:center;color:var(--muted)">
+        목록에서 정책을 선택하세요.
+      </div>
+      <div id="policy-detail" style="display:none">
+        <div class="section-card" style="margin-bottom:16px">
+          <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px">
+            <h3 class="section-title" style="margin:0" id="detail-name">정책명</h3>
+            <button class="btn-ghost sm" data-ui-edit-link data-ui-delete-target="#policy-modal" onclick="editCurrentPolicy()">수정</button>
+            <button class="btn-ghost sm" style="color:var(--danger)" data-ui-delete-source hidden onclick="deleteCurrentPolicy()">삭제</button>
+          </div>
+          <div class="form-grid">
+            <div class="form-group">
+              <label class="form-label">정책 유형</label>
+              <div class="form-input" style="background:var(--bg-secondary)" id="detail-type">-</div>
+            </div>
+            <div class="form-group">
+              <label class="form-label">자기 승인</label>
+              <div class="form-input" style="background:var(--bg-secondary)" id="detail-self">불허</div>
+            </div>
+            <div class="form-group full">
+              <label class="form-label">설명</label>
+              <div class="form-input" style="background:var(--bg-secondary)" id="detail-desc">-</div>
+            </div>
+          </div>
+        </div>
+        <div class="section-card">
+          <h3 class="section-title">승인 단계</h3>
+          <div class="table-wrap">
+            <table class="data-table">
+              <thead><tr><th scope="col">단계</th><th scope="col">필요 승인 수</th><th scope="col">승인 가능자</th></tr></thead>
+              <tbody id="detail-steps"></tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- 정책 추가/편집 모달 -->
+  <div id="policy-modal" class="modal-overlay" style="display:none" data-ui-edit-modal data-ui-edit-record="#policy-edit-id">
+    <!-- 승인 단계를 가로로 늘어놓기 때문에 폭을 넓게 잡는다 — 이 폭에서 한 줄에 6단계가 들어간다. -->
+    <div class="modal" style="width:1120px;max-width:95vw" role="dialog" aria-modal="true" aria-labelledby="policy-modal-title">
+      <div class="modal-header">
+        <h3 class="modal-title" id="policy-modal-title">정책 추가</h3>
+        <button class="modal-close" onclick="closePolicyModal()" aria-label="닫기">×</button>
+      </div>
+      <div class="modal-body">
+        <input type="hidden" id="policy-edit-id">
+        <div class="form-grid">
+          <div class="form-group full">
+            <label class="form-label" for="policy-name">정책명 <span class="req">*</span></label>
+            <input class="form-input" id="policy-name" placeholder="2단계 승인 (팀장 + CTO)">
+          </div>
+          <div class="form-group">
+            <label class="form-label" for="policy-type">정책 유형</label>
+            <select class="form-select" id="policy-type">
+              <option value="ANY_ONE">ANY_ONE — 1명 이상 승인</option>
+              <option value="ALL">ALL — 전원 승인</option>
+              <option value="STEP">STEP — 단계별 순차 승인</option>
+            </select>
+          </div>
+          <div class="form-group">
+            <label class="form-label" for="policy-self">자기 승인</label>
+            <select class="form-select" id="policy-self">
+              <option value="false">불허 (권장)</option>
+              <option value="true">허용</option>
+            </select>
+          </div>
+          <div class="form-group full">
+            <label class="form-label" for="policy-desc">설명</label>
+            <input class="form-input" id="policy-desc" placeholder="정책 설명">
+          </div>
+        </div>
+
+        <!-- 승인 단계 -->
+        <div style="margin-top:20px">
+          <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px">
+            <label class="form-label" style="margin:0;font-weight:600">승인 단계</label>
+            <button id="policy-add-step" type="button" class="btn btn-ghost" style="font-size:12px;padding:4px 10px" onclick="addPolicyStep()">+ 단계 추가</button>
+          </div>
+          <div id="policy-steps" class="appr-step-strip">
+            <!-- 단계 카드가 동적으로 추가됨 -->
+          </div>
+          <p style="font-size:12px;color:var(--muted);margin-top:8px">승인 단계는 한 개 이상 필요하며, 각 단계에 승인 가능자를 한 명 이상 지정해야 합니다.</p>
+
+          <div class="ds-help-label-row"><label class="form-label">결재선 미리보기</label><div class="ds-help" data-ui-help><button class="ds-help-toggle" type="button" data-ui-help-toggle aria-label="결재선 미리보기 도움말" aria-expanded="false"><svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M11 18h2v-2h-2v2zm1-16C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm0 18c-4.41 0-8-3.59-8-8s3.59-8 8-8 8 3.59 8 8-3.59 8-8 8zm0-14c-2.21 0-4 1.79-4 4h2c0-1.1.9-2 2-2s2 .9 2 2c0 2-3 1.75-3 5h2c0-2.25 3-2.5 3-5 0-2.21-1.79-4-4-4z"></path></svg></button><div class="ds-help-panel" id="approval-preview-help" data-ui-help-panel hidden aria-label="결재선 미리보기 도움말"><strong class="ds-help-title">결재선 미리보기</strong><div class="ds-help-content"><p>오피스 시스템의 결재 도장란과 같은 모양으로 보입니다.</p></div><div class="ds-help-foot"><button class="btn btn-primary ds-help-close" type="button" data-ui-help-close>닫기</button></div></div></div></div>
+          <div id="policy-stamp"></div>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-ghost" onclick="closePolicyModal()" data-ui-edit-cancel>취소</button>
+        <button class="btn btn-primary" onclick="submitPolicyModal()" data-ui-edit-save>저장</button>
+      </div>
+    </div>
+  </div>
+
+  <script>
+  var currentPolicyId = null;
+  var policiesData = [];
+  var usersData = [];
+  var stepCounter = 0;
+
+  // 사용자 목록 로드
+  fetch('/api/v1/users').then(r => r.json()).then(res => { usersData = res.data || []; });
+
+
+  // 페이지 로드 시 API에서 정책 목록 가져오기
+  fetch('/api/v1/policies')
+    .then(r => r.json())
+    .then(res => {
+      policiesData = res.data || [];
+      renderPolicyList();
+    })
+    .catch(() => {
+      document.getElementById('policy-list-empty').textContent = '로딩 실패';
+    });
+
+  function renderPolicyList() {
+    const ul = document.getElementById('policy-list');
+    const emptyLi = document.getElementById('policy-list-empty');
+    if (policiesData.length === 0) {
+      emptyLi.textContent = '등록된 정책이 없습니다.';
+      return;
+    }
+    emptyLi.style.display = 'none';
+    policiesData.forEach(p => {
+      const li = document.createElement('li');
+      li.id = 'policy-item-' + p.id;
+      li.style.cssText = 'padding:14px 20px;border-bottom:1px solid var(--border);cursor:pointer;transition:background 0.15s';
+      li.innerHTML = `
+        <div style="display:flex;align-items:center;justify-content:space-between">
+          <strong style="font-size:14px">${p.name}</strong>
+          <span style="font-size:11px;padding:2px 7px;border-radius:4px;background:var(--bg-tertiary);color:var(--text-secondary)">${p.policyType}</span>
+        </div>
+        <div style="font-size:12px;color:var(--muted);margin-top:4px">${p.description || '설명 없음'}</div>
+      `;
+      li.tabIndex = 0;
+      li.setAttribute('role', 'button');
+      li.onclick = () => selectPolicy(p.id);
+      li.onkeydown = (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); selectPolicy(p.id); } };
+      li.onmouseover = () => { if (!li.classList.contains('active')) li.style.background = 'var(--bg-secondary)'; };
+      li.onmouseout = () => { if (!li.classList.contains('active')) li.style.background = ''; };
+      ul.appendChild(li);
+    });
+  }
+
+  function selectPolicy(id) {
+    currentPolicyId = id;
+    document.querySelectorAll('#policy-list li[id^="policy-item-"]').forEach(li => {
+      li.classList.remove('active');
+      li.style.background = '';
+    });
+    const item = document.getElementById('policy-item-' + id);
+    if (item) { item.classList.add('active'); item.style.background = 'var(--bg-secondary)'; }
+
+    const p = policiesData.find(x => x.id === id);
+    if (!p) return;
+
+    document.getElementById('policy-empty').style.display = 'none';
+    document.getElementById('policy-detail').style.display = '';
+    document.getElementById('detail-name').textContent = p.name;
+    document.getElementById('detail-type').textContent = p.policyType;
+    document.getElementById('detail-self').textContent = p.allowSelfApproval ? '허용' : '불허';
+    document.getElementById('detail-desc').textContent = p.description || '-';
+
+    const tbody = document.getElementById('detail-steps');
+    if (p.steps && p.steps.length > 0) {
+      tbody.innerHTML = p.steps.map(s => {
+        const approvers = (s.approvers || []).map(u =>
+          `<span style="display:inline-block;margin-right:4px;padding:2px 7px;background:var(--bg-tertiary);border-radius:4px;font-size:12px">${u.name}</span>`
+        ).join('');
+        return `<tr><td>${s.stepOrder}단계</td><td>${s.requiredCount}명</td><td>${approvers || '<span style="color:var(--muted)">-</span>'}</td></tr>`;
+      }).join('');
+    } else {
+      tbody.innerHTML = '<tr><td colspan="3" style="text-align:center;color:var(--muted)">승인 단계가 없습니다 — 프로젝트 승인선은 비어 있으며 전역 운영 승인 정책의 적용을 받습니다.</td></tr>';
+    }
+  }
+
+  function addPolicyStep(stepData) {
+    const idx = ++stepCounter;
+    const container = document.getElementById('policy-steps');
+    const div = document.createElement('div');
+    div.id = 'step-' + idx;
+    div.className = 'appr-step-card';
+
+    // 고른 사람 id 를 이 요소에 들고 다닌다 — 저장할 때 여기서 읽는다.
+    const picked = new Set((stepData?.approvers || []).map(a => a.id));
+    div.dataset.picked = JSON.stringify([...picked]);
+
+    div.innerHTML = `
+      <div class="appr-step-head">
+        <span class="appr-step-no">${container.children.length + 1}단계</span>
+        <button type="button" onclick="document.getElementById('step-${idx}').remove();renumberSteps();renderStamp()"
+                class="appr-step-del" aria-label="이 단계 삭제">×</button>
+      </div>
+      <div class="appr-step-grid">
+        <div>
+          <label class="form-label appr-step-label" for="step-req-${idx}">필요 승인 수</label>
+          <input type="number" id="step-req-${idx}" class="form-input step-required appr-step-num" min="1"
+                 value="${stepData?.requiredCount || 1}" oninput="renderStamp()">
+        </div>
+        <div>
+          <label class="form-label appr-step-label">승인 가능자</label>
+          <!-- 인라인 목록 대신 공통 사람 선택 모달(PeoplePicker)로 고른다. 여기서는 고른 결과만 칩으로. -->
+          <div class="appr-chips" id="step-chips-${idx}"></div>
+          <button type="button" class="btn btn-ghost appr-pick-open" onclick="openApproverPicker(${idx})">
+            <span id="step-cnt-${idx}">＋ 승인 가능자 선택</span>
+          </button>
+        </div>
+      </div>
+    `;
+    container.appendChild(div);
+    renderPeople(idx);
+    renderStamp();   // 단계를 더하면 결재선도 곧바로 따라와야 한다
+  }
+
+  /* ── 승인자 선택 ──
+     인라인 목록/Ctrl+클릭 대신 공통 사람 선택 모달(PeoplePicker)로 고른다.
+     선택 상태는 단계 카드(div#step-{idx})의 data-picked JSON 이 정본이고,
+     화면에는 고른 사람 칩과 개수만 남긴다. */
+  function stepEl(idx) { return document.getElementById('step-' + idx); }
+  function stepPicked(idx) {
+    try { return new Set(JSON.parse(stepEl(idx).dataset.picked || '[]')); } catch (e) { return new Set(); }
+  }
+  function setStepPicked(idx, set) { stepEl(idx).dataset.picked = JSON.stringify([...set]); }
+
+  function togglePerson(idx, userId) {
+    const set = stepPicked(idx);
+    if (set.has(userId)) set.delete(userId); else set.add(userId);
+    setStepPicked(idx, set);
+    renderPeople(idx);
+    renderStamp();
+  }
+
+  // 카드에 고른 사람 칩 + 개수만 다시 그린다.
+  function renderPeople(idx) {
+    const el = stepEl(idx);
+    if (!el) return;
+    const set = stepPicked(idx);
+    const chips = document.getElementById('step-chips-' + idx);
+    const cnt = document.getElementById('step-cnt-' + idx);
+    const esc = t => String(t == null ? '' : t)
+      .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+    if (chips) {
+      chips.innerHTML = usersData.filter(u => set.has(u.id)).map(u =>
+        `<span class="appr-chip">${esc(u.name)}` +
+        `<button type="button" onclick="togglePerson(${idx},${u.id})" aria-label="${esc(u.name)} 제외">×</button></span>`
+      ).join('');
+    }
+    if (cnt) cnt.textContent = set.size ? ('＋ 승인 가능자 (' + set.size + '명)') : '＋ 승인 가능자 선택';
+  }
+
+  // 모달을 열어 이 단계의 승인 가능자를 고른다.
+  function openApproverPicker(idx) {
+    if (!window.PeoplePicker) return;
+    window.PeoplePicker.open({
+      title: '승인 가능자 선택',
+      confirmLabel: '선택 완료',
+      people: usersData.map(u => ({ id: u.id, name: u.name, teamName: u.role })),
+      selected: [...stepPicked(idx)],
+      multi: true,
+      onConfirm: function (ids) {
+        setStepPicked(idx, new Set(ids.map(Number)));
+        renderPeople(idx);
+        renderStamp();
+      }
+    });
+  }
+
+  /* ── 결재선 미리보기 ──
+     이것도 결재다. 오피스 시스템의 결재 도장란과 같은 모양으로 보여 준다 —
+     같은 회사에서 쓰는 두 시스템이 결재를 다른 얼굴로 그리면 사용자가 매번 다시 배운다.
+     여기서는 "누가 승인하게 되는가" 를 미리 보는 것이라 전부 대기 상태로 그린다. */
+  function renderStamp() {
+    const host = document.getElementById('policy-stamp');
+    if (!host) return;
+    const esc = t => String(t == null ? '' : t)
+      .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+
+    const steps = [...document.querySelectorAll('#policy-steps > div')].map(div => {
+      const idx = div.id.replace('step-', '');
+      const ids = stepPicked(idx);
+      const need = Number(div.querySelector('.step-required').value);
+      return { people: usersData.filter(u => ids.has(u.id)), need };
+    });
+
+    if (!steps.length) {
+      host.innerHTML = '<p class="muted" style="margin:0;font-size:12px">'
+        + '승인 단계를 추가하면 결재선이 여기에 표시됩니다.</p>';
+      return;
+    }
+
+    const cells = steps.map(st => {
+      if (!st.people.length) {
+        return '<td class="st-sign"><span class="st-typed st-empty"><b>미지정</b>'
+             + '<small>승인자를 고르세요</small></span></td>';
+      }
+      const head = st.people[0];
+      const more = st.people.length - 1;
+      return '<td class="st-sign"><span class="st-typed st-wait">'
+        + '<b>' + esc(head.name) + '</b>'
+        + (more > 0 ? '<span class="st-more">외 ' + more + '명</span>' : '')
+        + '<small>' + (Number.isInteger(st.need) && st.need >= 1 ? st.need + '명 승인' : '승인 수 확인 필요') + '</small>'
+        + '</span></td>';
+    }).join('');
+
+    host.innerHTML =
+      '<div class="appr-stamp-wrap"><table class="appr-stamp">'
+      + '<tr><th scope="row" class="st-side" rowspan="2"><span>결</span><span>재</span></th>'
+      +   '<td class="st-title st-drafter">요청자</td>'
+      +   steps.map((_, i) => '<td class="st-title">' + (i + 1) + '단계</td>').join('')
+      + '</tr>'
+      + '<tr><td class="st-sign st-drafter"><span class="st-typed st-wait">'
+      +     '<b>배포 요청자</b><small>요청 시 기록</small></span></td>'
+      +   cells
+      + '</tr></table></div>';
+  }
+
+  function renumberSteps() {
+    document.querySelectorAll('#policy-steps > div').forEach((div, i) => {
+      const label = div.querySelector('span');
+      if (label) label.textContent = (i + 1) + '단계';
+    });
+  }
+
+  function openPolicyModal(id) {
+    const isEdit = !!id;
+    const p = isEdit ? policiesData.find(x => x.id === id) : null;
+    document.getElementById('policy-modal-title').textContent = isEdit ? '정책 편집' : '정책 추가';
+    document.getElementById('policy-edit-id').value = id || '';
+    document.getElementById('policy-name').value = p ? p.name : '';
+    document.getElementById('policy-type').value = p ? p.policyType : 'ANY_ONE';
+    document.getElementById('policy-self').value = p ? String(p.allowSelfApproval) : 'false';
+    if (window.DeploySelect) {
+      window.DeploySelect.sync(document.getElementById('policy-type'));
+      window.DeploySelect.sync(document.getElementById('policy-self'));
+    }
+    document.getElementById('policy-desc').value = p ? (p.description || '') : '';
+
+    // 단계 초기화
+    document.getElementById('policy-steps').innerHTML = '';
+    stepCounter = 0;
+    if (p && p.steps && p.steps.length > 0) {
+      p.steps.forEach(s => addPolicyStep(s));
+    }
+
+    renderStamp();
+    document.getElementById('policy-modal').style.display = 'flex';
+  }
+
+  function closePolicyModal() {
+    document.getElementById('policy-modal').style.display = 'none';
+  }
+
+  function editCurrentPolicy() {
+    openPolicyModal(currentPolicyId);
+  }
+
+  function deleteCurrentPolicy() {
+    if (!currentPolicyId) return;
+    const p = policiesData.find(x => x.id === currentPolicyId);
+    if (!p) return;
+    openConfirm('승인 정책 삭제', `"${p.name}" 정책을 삭제하시겠습니까?`, () => {
+      const csrfToken  = document.querySelector('meta[name="_csrf"]').content;
+      const csrfHeader = document.querySelector('meta[name="_csrf_header"]').content;
+      fetch(`/api/v1/policies/${currentPolicyId}`, {
+        method: 'DELETE', headers: { [csrfHeader]: csrfToken }
+      })
+      .then(r => r.json())
+      .then(data => handleDeleteResult(data, {
+        type: 'policy', id: currentPolicyId,
+        onDone: () => navigate('policies'),
+        retry: () => deleteCurrentPolicy()
+      }))
+      .catch(() => showToast('네트워크 오류', 'error'));
+    });
+  }
+
+  function submitPolicyModal() {
+    const id = document.getElementById('policy-edit-id').value;
+
+    const steps = [];
+    document.querySelectorAll('#policy-steps > div').forEach((div, i) => {
+      const required = Number(div.querySelector('.step-required')?.value);
+      // 고른 사람은 select 가 아니라 dataset 에 들고 있다(사람 선택 UI 로 바꾸면서).
+      let approverIds = [];
+      try { approverIds = JSON.parse(div.dataset.picked || '[]'); } catch (e) { approverIds = []; }
+      steps.push({ stepOrder: i + 1, requiredCount: required, approverIds });
+    });
+
+    // 서버까지 가지 않아도 아는 것은 여기서 짚는다 — 왕복을 기다릴 이유가 없다.
+    const nameEl = document.getElementById('policy-name');
+    if (!nameEl.value.trim()) {
+      markInvalid(nameEl, '정책명을 입력하세요.');
+      showToast('정책명은 필수입니다.', 'error');
+      return;
+    }
+    if (steps.length === 0) {
+      showToast('승인 단계를 한 개 이상 추가하고 승인 가능자를 지정하세요.', 'error');
+      document.getElementById('policy-add-step').focus();
+      return;
+    }
+    var _emptyStep = [...document.querySelectorAll('#policy-steps > div')]
+      .find(d => { try { return JSON.parse(d.dataset.picked || '[]').length === 0; } catch (e) { return true; } });
+    if (_emptyStep) {
+      markInvalid(_emptyStep.querySelector('.appr-pick .form-input'), '승인 가능자를 한 명 이상 고르세요.');
+      showToast('승인 가능자를 고르지 않은 단계가 있습니다.', 'error');
+      return;
+    }
+
+    const invalidRequired = [...document.querySelectorAll('#policy-steps > div')]
+      .map(div => div.querySelector('.step-required'))
+      .find(input => !Number.isInteger(Number(input.value)) || Number(input.value) < 1);
+    if (invalidRequired) {
+      markInvalid(invalidRequired, '필요 승인 수는 1 이상의 정수로 입력해 주세요.');
+      showToast('필요 승인 수는 1 이상의 정수로 입력해 주세요.', 'error');
+      invalidRequired.focus();
+      return;
+    }
+
+    const body = {
+      name: document.getElementById('policy-name').value,
+      policyType: document.getElementById('policy-type').value,
+      allowSelfApproval: document.getElementById('policy-self').value === 'true',
+      description: document.getElementById('policy-desc').value || null,
+      steps
+    };
+
+    const csrfToken = document.querySelector('meta[name="_csrf"]').content;
+    const csrfHeader = document.querySelector('meta[name="_csrf_header"]').content;
+
+    fetch(id ? `/api/v1/policies/${id}` : '/api/v1/policies', {
+      method: id ? 'PUT' : 'POST',
+      headers: { 'Content-Type': 'application/json', [csrfHeader]: csrfToken },
+      body: JSON.stringify(body)
+    })
+    .then(r => r.json())
+    .then(data => {
+      if (data.success) {
+        showToast(data.message, 'success');
+        closePolicyModal();
+        navigate('policies');
+        return;
+      }
+      // 서버가 어느 칸이 문제인지 알려 주면 그 칸을 붉게 짚는다.
+      // 못 알아내면 최소한 정책명 칸으로 눈을 끌어 준다 — 토스트만 띄우면 어디를 볼지 모른다.
+      const marked = applyFieldErrors(data, { name: 'policy-name', policyType: 'policy-type' });
+      if (!marked) markInvalid(document.getElementById('policy-name'), data.message);
+      showToast(data.message || '오류가 발생했습니다.', 'error');
+    })
+    .catch(() => showToast('네트워크 오류가 발생했습니다.', 'error'));
+  }
+  </script>
+
+</th:block>
+</body>
+</html>

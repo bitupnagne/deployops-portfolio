@@ -1,0 +1,10 @@
+[Unit]
+Description=Retry storage-gated desired containers after storage becomes available
+
+[Timer]
+OnBootSec=30s
+OnUnitInactiveSec=30s
+Unit=deploy-storage-guard.service
+
+[Install]
+WantedBy=timers.target

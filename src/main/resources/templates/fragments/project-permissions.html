@@ -1,0 +1,40 @@
+<!DOCTYPE html>
+<html xmlns:th="http://www.thymeleaf.org">
+<body>
+<div th:fragment="panel" id="tab-permissions" class="tab-panel section-card" role="tabpanel"
+     aria-labelledby="tabbtn-permissions" th:data-project-id="${project.id}">
+  <h3 class="section-title">프로젝트 사용자 권한</h3>
+  <p class="form-hint">이 프로젝트의 조회·요청·승인·실행 권한을 사용자별로 부여하거나 회수합니다. 아래 저장 버튼으로 별도 저장합니다.</p>
+  <div class="form-grid">
+    <div class="form-group full">
+      <label class="form-label" for="permission-user">사용자</label>
+      <select id="permission-user" class="form-select" data-no-custom-select data-permission="user" onchange="ProjectPermissions.selectUser()">
+        <option value="">사용자를 선택해 주세요.</option>
+      </select>
+    </div>
+  </div>
+  <p data-permission="status" role="status" aria-live="polite">탭을 열면 사용자 목록을 불러옵니다.</p>
+  <div data-permission="editor" hidden>
+    <div class="notice-box" data-permission="notes"></div>
+    <h4>직접 부여 권한</h4>
+    <p class="form-hint">체크를 해제하면 해당 직접 권한을 회수합니다. 기존 ALL 항목은 자동 변환하지 않습니다. 조회·요청·승인·실행은 서로 다른 권한입니다.</p>
+    <p class="form-hint">MR 변경내용과 diff를 검토하려면 <strong>프로젝트 조회</strong>와 <strong>MR 검토</strong> 권한이 모두 필요합니다. MR 승인과 병합은 각각 별도 권한입니다.</p>
+    <p class="form-hint">런타임 설정 관리와 런타임 파일 로그 조회는 TEST·PROD별 별도 권한입니다. 설정 관리 권한만으로 승인하거나 배포를 실행할 수 없습니다.</p>
+    <div data-permission="grants" class="form-grid"></div>
+    <h4>현재 적용되는 프로젝트 권한</h4>
+    <p class="form-hint">역할에서 자동으로 허용되는 권한과 직접 부여를 구분하여 표시합니다. 승인 단계·상태 등 작업별 조건은 계속 적용됩니다.</p>
+    <ul data-permission="effective"></ul>
+    <p><a th:href="@{/deploy/policies}">승인 정책의 지정 승인자 확인</a></p>
+    <div class="form-group full">
+      <label class="form-label" for="permission-reason">변경 사유</label>
+      <textarea id="permission-reason" class="form-textarea" data-permission="reason" rows="2" maxlength="200"
+                placeholder="권한을 부여하거나 회수하는 사유를 입력하세요."></textarea>
+    </div>
+    <div class="page-actions" style="margin-top:12px">
+      <button type="button" class="btn btn-ghost" data-permission="reload" onclick="ProjectPermissions.selectUser()">최신 권한 불러오기 · 입력 초기화</button>
+      <button type="button" class="btn btn-primary" data-permission="save" onclick="ProjectPermissions.save()">권한 저장</button>
+    </div>
+  </div>
+</div>
+</body>
+</html>

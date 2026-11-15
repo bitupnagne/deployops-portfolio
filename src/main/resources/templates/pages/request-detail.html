@@ -1,0 +1,1510 @@
+<!DOCTYPE html>
+<html xmlns:th="http://www.thymeleaf.org" xmlns:sec="http://www.thymeleaf.org/extras/spring-security">
+<body>
+<th:block th:fragment="content">
+
+  <style>
+    .deploy-progress{display:flex;gap:8px;align-items:flex-end}
+    .deploy-progress .prog-step{flex:1;text-align:center;min-width:0;display:flex;flex-direction:column;align-items:center}
+    /* 막대 위 ▲ 수행자 마커 */
+    .deploy-progress .prog-marker{display:flex;flex-direction:column;align-items:center;justify-content:flex-end;min-height:42px;margin-bottom:5px}
+    .deploy-progress .prog-marker-empty{min-height:42px;margin-bottom:5px}
+    .deploy-progress .prog-actor-role{font-size:10px;font-weight:700;color:#94a3b8;line-height:1.2;letter-spacing:.02em}
+    .deploy-progress .prog-actor-name{font-size:12.5px;font-weight:800;color:#0f172a;line-height:1.25;white-space:nowrap}
+    .deploy-progress .prog-actor-time{font-size:10px;color:#b0b6c2;line-height:1.2}
+    .deploy-progress .prog-tri{font-size:10px;line-height:.7;margin-top:2px;color:#10b981}
+    .deploy-progress .prog-active .prog-tri{color:#4F46E5}
+    .deploy-progress .prog-failed .prog-tri{color:#dc2626}
+    .deploy-progress .prog-step .prog-bar,.deploy-progress .prog-step .prog-label{width:100%}
+    .deploy-progress .prog-bar{height:10px;border-radius:6px;background:#e5e8ef;transition:background .25s,box-shadow .25s}
+    .deploy-progress .prog-label{font-size:12.5px;margin-top:9px;font-weight:700;color:#9ca3af;white-space:nowrap}
+    .deploy-progress .prog-done .prog-bar{background:#10b981}
+    .deploy-progress .prog-done .prog-label{color:#059669}
+    .deploy-progress .prog-active .prog-bar{
+      background:linear-gradient(90deg,#4F46E5,#6ee7d5,#4F46E5);
+      background-size:220% 100%;
+      box-shadow:0 0 0 4px rgba(79,70,229,.18);
+      animation:prog-wave 1.5s ease-in-out infinite, prog-bob 1.5s ease-in-out infinite;
+      position:relative;
+    }
+    /* 진행 중 단계 우측 끝에 출렁이는 물결 표시 */
+    .deploy-progress .prog-active .prog-bar::after{
+      content:"";position:absolute;right:-4px;top:50%;width:14px;height:14px;
+      margin-top:-7px;border-radius:50%;background:#4F46E5;
+      animation:prog-ripple 1.5s ease-out infinite;
+      will-change:transform,opacity;
+    }
+    .deploy-progress .prog-active .prog-label{color:#00796a}
+    /* 실패는 색 + 빗금 이중 표기.
+       초록/빨강은 가장 흔한 색각 이상에서 같아 보이는 조합인데 하필 그게 성공/실패다.
+       막대만 빨갛게 두면 그 사용자에게는 "완료" 와 "실패" 가 구분되지 않는다. */
+    .deploy-progress .prog-failed .prog-bar{
+      background:repeating-linear-gradient(45deg,#dc2626 0 4px,rgba(255,255,255,.55) 4px 7px);
+    }
+    .deploy-progress .prog-failed .prog-label{color:#dc2626}
+    .deploy-progress .prog-todo .prog-bar{background:#e5e8ef}
+
+    /* ── 서버별 구간 ──
+       단계 흐름도는 요청 전체가 성공/실패인지만 말한다. 대상이 여러 대일 때 정작 알아야 할 것은
+       "어느 호기에서 멈췄나" 다 — 롤링은 실패한 서버에서 중단되므로 그 지점이
+       "여기까지 새 버전, 그 뒤는 옛 버전" 의 경계다. */
+    .srv-flow{display:flex;align-items:stretch;gap:0;margin-top:18px;flex-wrap:wrap}
+    .srv-seg{display:flex;align-items:center;gap:0}
+    .srv-node{
+      display:flex;flex-direction:column;align-items:center;gap:4px;
+      padding:6px 10px;border-radius:8px;border:1px solid var(--border);background:var(--surface);min-width:96px;
+    }
+    .srv-node .srv-name{font-size:12px;font-weight:800;color:#0f172a;white-space:nowrap}
+    .srv-node .srv-res{font-size:11px;font-weight:700}
+    .srv-node.ok   { border-color:rgba(5,150,105,.45) }
+    .srv-node.ok .srv-res   { color:#059669 }
+    .srv-node.fail { border-color:rgba(220,38,38,.5);background:rgba(220,38,38,.05) }
+    .srv-node.fail .srv-res { color:#dc2626 }
+    /* 연결선이 곧 판정이다 — 성공 구간은 실선 초록, 실패 이후는 점선 회색(더 가지 않았다는 뜻). */
+    .srv-link{width:26px;height:3px;border-radius:2px;background:#10b981;flex:none}
+    .srv-link.broken{
+      background:repeating-linear-gradient(90deg,#cbd5e1 0 4px,transparent 4px 8px);
+    }
+    .srv-flow-empty{font-size:12px;color:var(--muted);margin-top:14px}
+    @keyframes prog-wave{0%{background-position:0% 50%}50%{background-position:100% 50%}100%{background-position:0% 50%}}
+    @keyframes prog-bob{0%,100%{transform:translateY(0)}50%{transform:translateY(-2px)}}
+    @keyframes prog-ripple{0%{transform:scale(.6);opacity:.7}70%{transform:scale(1.9);opacity:0}100%{transform:scale(1.9);opacity:0}}
+  </style>
+
+  <div th:if="${request == null}" class="section-card" style="text-align:center;padding:64px 48px">
+    <div style="font-size:40px;margin-bottom:16px">REQ</div>
+    <p style="font-size:15px;font-weight:600;color:var(--text);margin-bottom:6px">배포 요청을 찾을 수 없습니다.</p>
+    <p style="color:var(--muted);font-size:13px;margin-bottom:20px">삭제되었거나 잘못된 접근일 수 있습니다.</p>
+    <button class="btn btn-ghost" onclick="navigate('requests')">목록으로</button>
+  </div>
+
+  <div th:if="${request != null}" th:with="isRollback=${request.reason != null and #strings.startsWith(request.reason, '[ROLLBACK]')}">
+
+    <section class="section-card" th:if="${request.project.storageMounts != null and !#lists.isEmpty(request.project.storageMounts)}" aria-labelledby="storage-snapshot-title">
+      <h2 class="section-title" id="storage-snapshot-title">승인 대상 WAS 저장소 연결</h2>
+      <p class="form-hint">요청에 고정된 서버별 경로와 접근 방식입니다. 원본 롤백은 이 설정을 복원하며 저장소 파일 내용은 되돌리지 않습니다. 실제 마운트 원본과 UID:GID 접근 권한은 배포·재기동 때 다시 확인합니다.</p>
+      <div class="table-wrap" role="region" aria-label="승인 대상 저장소 연결" tabindex="0">
+        <table class="data-table"><thead><tr><th scope="col">WAS / 배포 단위 ID</th><th scope="col">저장소 키</th><th scope="col">서버 경로</th><th scope="col">컨테이너 경로</th><th scope="col">접근</th><th scope="col">마운트 원본</th></tr></thead>
+          <tbody><tr th:each="mount : ${request.project.storageMounts}"><td th:text="|${mount.serverId} / ${mount.componentId}|">서버 / 단위</td><td th:text="${mount.storageKey}">키</td><td th:text="${mount.relativePath.isEmpty() ? mount.rootPath : mount.rootPath + '/' + mount.relativePath}">서버 경로</td><td th:text="${mount.containerPath}">컨테이너 경로</td><td th:text="${mount.readOnly ? '읽기 전용' : '읽기·쓰기'}">접근</td><td th:text="|${mount.mountSource} (${mount.fsType})|">원본</td></tr></tbody>
+        </table>
+      </div>
+    </section>
+
+    <div style="background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);padding:24px 28px;margin-bottom:16px;position:relative;overflow:hidden">
+      <div style="position:absolute;top:0;left:0;width:4px;height:100%;background:var(--grad-main);border-radius:var(--radius) 0 0 var(--radius)"></div>
+      <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:16px;flex-wrap:wrap;padding-left:8px">
+        <div>
+          <div style="display:flex;align-items:center;gap:10px;margin-bottom:8px;flex-wrap:wrap">
+            <span class="env-badge lg" th:classappend="${request.environment.name() == 'PROD'} ? 'prod' : 'test'"
+                  th:text="${request.environment.name()}">PROD</span>
+            <h1 style="font-size:22px;font-weight:800;color:var(--text);letter-spacing:-0.02em"
+                th:text="${request.reqNo}">REQ-20260409-001</h1>
+            <span id="request-status-badge" class="status-badge lg" th:classappend="${request.status.name().toLowerCase().replace('_','-')}"
+                  th:text="${request.status.label}">승인 대기</span>
+            <span class="status-badge pending" th:if="${!isRollback}">배포 요청</span>
+            <span class="status-badge danger" th:if="${isRollback}">롤백 요청</span>
+          </div>
+          <p style="font-size:15px;font-weight:700;color:var(--text);margin-bottom:4px"
+             th:text="${request.project.name}">payment-api</p>
+          <p style="font-size:13px;color:var(--muted)">
+            <span th:text="${request.requestedBy?.name ?: '-'}">홍길동</span>
+            <span style="margin:0 6px;color:var(--border-dark)">·</span>
+            <span th:text="${request.createdAt != null ? #temporals.format(request.createdAt, 'yyyy-MM-dd HH:mm') : '-'}">2026-04-09 09:30</span>
+          </p>
+        </div>
+        <div style="display:flex;gap:8px;align-items:center">
+          <button class="btn btn-ghost" onclick="navigate('requests')" style="font-size:13px">목록으로</button>
+        </div>
+      </div>
+    </div>
+
+    <div th:if="${canViewRequestEvidence == true}" style="display:flex;justify-content:flex-end;margin:-4px 0 12px"><a class="btn btn-ghost" th:href="@{'/api/v1/deploy-requests/' + ${request.id} + '/evidence'}" style="font-size:13px">증적 JSON</a></div>
+    <section class="section-card" aria-label="승인된 컨테이너 종료 유예">
+      <h3>승인된 컨테이너 종료 유예</h3>
+      <p class="form-hint">요청 생성 당시 고정된 설정입니다. 정적 파일·프록시는 적용 대상이 아닙니다. 유예 시간이 지나면 강제 종료될 수 있습니다.</p>
+      <p th:if="${request.project.managedRuntimeSettings == null or #lists.isEmpty(request.project.managedRuntimeSettings)}">기본 30초</p>
+      <p th:each="binding : ${request.project.managedRuntimeSettings}"
+         th:text="${'배포 단위 #' + binding.componentId() + ' · ' + (binding.mode() == 'INHERIT' ? '프로젝트 기본 설정 상속' : binding.stopGraceSeconds() + '초')}"></p>
+    </section>
+    <div id="request-withdrawal-card" class="section-card" th:if="${canWithdrawRequest}" style="margin-bottom:16px">
+      <h3>대기 요청 철회</h3>
+      <p class="form-hint">실행 전 요청을 종료합니다. 설정이 변경된 요청은 철회 후 새로 생성해 주세요. 실행 중인 작업은 철회할 수 없습니다.</p>
+      <label for="withdrawal-reason">철회 사유</label>
+      <textarea id="withdrawal-reason" class="form-input" rows="2" maxlength="400" placeholder="철회 사유를 입력해 주세요."></textarea>
+      <button class="btn btn-danger" id="btn-withdraw-request" th:onclick="'withdrawRequest(' + ${request.id} + ')'">요청 철회</button>
+    </div>
+    <div class="notice-box" th:if="${request.status.name() == 'CANCELLED'}" style="margin-bottom:16px">
+      <strong>철회 사유: </strong><span th:text="${request.withdrawalReason ?: '-'}"></span>
+    </div>
+    <div class="notice-box warning" th:if="${prodRollbackBlockReason != null}" style="margin-bottom:16px"
+         th:text="${prodRollbackBlockReason}">운영 롤백 출처 검증이 필요합니다.</div>
+
+    <div class="section-card" style="padding:22px 24px;margin-bottom:16px">
+      <p style="font-size:12px;font-weight:600;color:var(--muted);text-transform:uppercase;letter-spacing:.05em;margin-bottom:18px">진행 흐름</p>
+      <div id="request-progress" class="deploy-progress" th:if="${progress != null}">
+        <div class="prog-step" th:each="step : ${progress}" th:classappend="'prog-' + ${step.state}">
+          <div class="prog-marker" th:if="${step.actor != ''}">
+            <span class="prog-actor-role" th:if="${step.role != ''}" th:text="${step.role}">실행자</span>
+            <span class="prog-actor-name" th:text="${step.actor}">홍길동</span>
+            <span class="prog-actor-time" th:if="${step.time != ''}" th:text="${step.time}">06/18 09:30</span>
+            <span class="prog-tri">&#9660;</span>
+          </div>
+          <div class="prog-marker-empty" th:if="${step.actor == ''}"></div>
+          <div class="prog-bar"></div>
+          <div class="prog-label" th:text="${step.label}">단계</div>
+        </div>
+      </div>
+      <div class="status-timeline" id="status-tl" style="display:none"></div>
+
+      <!-- 서버별 구간 — 실제로 명령이 나간 서버가 있을 때만 채워진다. -->
+      <div id="srv-flow-wrap" th:unless="${publicDemo}" style="display:none">
+        <p style="font-size:12px;font-weight:600;color:var(--muted);text-transform:uppercase;letter-spacing:.05em;margin:22px 0 10px">
+          서버별 결과
+        </p>
+        <div class="srv-flow" id="srv-flow"></div>
+        <p class="srv-flow-empty" id="srv-flow-note"></p>
+        <details><summary>명령 시도 이력</summary><div id="srv-attempts"></div></details>
+      </div>
+    </div>
+
+    <!-- AI 실패 자동 진단 + 롤백 추천 (실패 상태면 자동 호출) -->
+    <div id="ai-failure-card" class="section-card" style="margin-bottom:16px;border:1px solid rgba(220,38,38,0.35)"
+         th:unless="${publicDemo}"
+         th:if="${aiEnabled and (request.status.name() == 'PROD_FAILED' or request.status.name() == 'TEST_FAILED')}"
+         th:data-request-id="${request.id}">
+      <p class="section-title" style="display:flex;align-items:center;gap:8px;margin-bottom:6px">
+        <img th:src="@{/img/assistant-mark.svg}" alt="" style="width:24px;height:24px;flex-shrink:0">
+        AI 실패 진단 · 롤백 추천
+      </p>
+      <div id="ai-failure-result" class="ai-result">AI가 실패 로그를 분석하고 있습니다…</div>
+    </div>
+    <script th:unless="${publicDemo}">
+    (function () {
+      const card = document.getElementById('ai-failure-card');
+      if (!card) return;
+      const out = document.getElementById('ai-failure-result');
+      const csrf = document.querySelector('meta[name="_csrf"]').content;
+      const csrfH = document.querySelector('meta[name="_csrf_header"]').content;
+      fetch('/api/v1/ai/failure-report/' + card.dataset.requestId, { method: 'POST', headers: { [csrfH]: csrf } })
+        .then(r => r.json())
+        .then(d => {
+          if (d.success) mdInto(out, d.data || d.message || '', { truncated: d.truncated });
+          else out.textContent = '⚠ ' + (d.message || '진단 실패');
+        })
+        .catch(() => { out.textContent = '진단 요청에 실패했습니다.'; });
+    })();
+    </script>
+
+    <!-- Assistant AI 어시스턴트: 이 배포 요청을 실제 모델로 분석 -->
+    <div class="section-card assistant-panel" th:unless="${publicDemo}" th:if="${aiEnabled}" style="margin-bottom:16px"
+         th:data-request-id="${request.id}">
+      <div style="display:flex;align-items:center;gap:10px;margin-bottom:12px">
+        <img th:src="@{/img/assistant-mark.svg}" alt="Assistant" style="width:30px;height:30px;flex-shrink:0">
+        <div>
+          <p class="section-title" style="margin:0">AI 배포 어시스턴트 · Assistant</p>
+          <p class="form-hint" style="margin:2px 0 0">이 배포 요청을 AI가 분석합니다. 필요한 항목을 선택하세요.</p>
+        </div>
+      </div>
+      <div style="display:flex;flex-wrap:wrap;gap:8px">
+        <button type="button" class="btn btn-ghost sm" onclick="aiAnalyze('risk', this)">위험도 분석</button>
+        <button type="button" class="btn btn-ghost sm" onclick="aiAnalyze('recommend-approver', this)">승인자 추천</button>
+        <button type="button" class="btn btn-ghost sm" onclick="aiAnalyze('summarize', this)">변경 요약</button>
+        <button type="button" class="btn btn-ghost sm" onclick="aiAnalyze('diagnose', this)">실패 원인 진단</button>
+      </div>
+      <div id="ai-result" class="ai-result" style="display:none"></div>
+    </div>
+
+    <script th:unless="${publicDemo}">
+    function aiAnalyze(kind, btn) {
+      const panel = document.querySelector('.assistant-panel');
+      const id = panel.dataset.requestId;
+      const out = document.getElementById('ai-result');
+      const csrf = document.querySelector('meta[name="_csrf"]').content;
+      const csrfH = document.querySelector('meta[name="_csrf_header"]').content;
+      out.style.display = 'block';
+      out.textContent = 'AI가 분석 중입니다...';
+      const buttons = panel.querySelectorAll('button');
+      buttons.forEach(b => b.disabled = true);
+      fetch('/api/v1/ai/' + kind + '/' + id, { method: 'POST', headers: { [csrfH]: csrf } })
+        .then(r => r.json())
+        .then(d => {
+          if (d.success) mdInto(out, d.data || d.message || '', { truncated: d.truncated });
+          else out.textContent = '⚠ ' + (d.message || '분석에 실패했습니다.');
+        })
+        .catch(() => { out.textContent = '요청에 실패했습니다.'; })
+        .finally(() => buttons.forEach(b => b.disabled = false));
+    }
+    </script>
+
+    <div id="retry-legacy-blocked" class="notice-box warning" th:if="${canViewExecutionLogs and retryLegacyBlocked}">기존 실행의 대상별 추적 이력을 보장할 수 없어 재시도할 수 없습니다. 새 요청의 승인 또는 롤백 절차를 진행해 주세요.</div>
+
+    <div id="execution-actor-block-reason" class="notice-box warning" style="margin-bottom:16px"
+         th:if="${executionActorBlockReason != null and (execReady or retryReady or execLive)}"
+         th:text="${executionActorBlockReason}">다른 운영자가 실행해야 합니다.</div>
+
+    <section id="persisted-execution-log-panel" class="section-card" th:if="${canViewExecutionLogs}"
+             th:data-request-id="${request.id}" style="margin-bottom:16px">
+      <p class="section-title">저장된 실행 로그</p>
+      <p class="form-hint">이 요청의 최근 명령 기록 20개를 표시합니다. 다시 열어도 조회할 수 있습니다.</p>
+      <p th:if="${publicDemo}" class="form-hint">공개 데모에서는 저장된 샘플 기록만 조회합니다. 실제 서버 로그 연결과 배포 실행은 제공하지 않습니다.</p>
+      <button type="button" class="btn btn-ghost sm" onclick="loadPersistedExecutionLogs()">저장된 로그 새로고침</button>
+      <p id="persisted-execution-log-status" role="status">저장된 로그를 불러오는 중입니다.</p>
+      <pre id="persisted-execution-log-text" style="white-space:pre-wrap;overflow-wrap:anywhere;max-height:420px;overflow:auto"></pre>
+    </section>
+    <!-- 실행 제한과 진행 로그 조회 권한은 구분한다. -->
+    <div id="exec-panel" class="section-card" style="margin-bottom:16px;border:1px solid rgba(255,145,0,0.35)"
+         th:unless="${publicDemo}"
+         th:if="${(canExecute and (execReady or retryReady)) or (canViewExecutionLogs and execLive)}">
+      <p class="section-title" style="display:flex;align-items:center;gap:6px;margin-bottom:6px">
+        <span style="width:18px;height:18px;background:var(--amber-light);border-radius:4px;display:inline-flex;align-items:center;justify-content:center;font-size:11px">▶</span>
+        <span th:text="${execLive ? '배포 진행 로그' : (isRollback ? (request.environment.name() == 'PROD' ? 'PROD 롤백 실행' : 'TEST 롤백 실행')
+                       : (request.environment.name() == 'PROD' ? 'PROD 배포 실행' : (request.sourceMrIid != null ? 'TEST 빌드 + 배포 실행' : 'TEST 이미지 배포 실행')))}">배포 실행</span>
+      </p>
+      <p class="form-hint" style="margin-bottom:14px" th:if="${canExecute and execReady}">
+        대상 이미지와 메타데이터를 확인한 뒤 실행하세요. 실행 흐름 안내는 절차 설명이며 실제 서버·CI·이미지 검사는 실행하지 않습니다.
+      </p>
+
+      <!-- MANUAL(수동 단계) 배포 -->
+      <div id="manual-steps" style="display:none;margin-bottom:16px" th:if="${canExecute}">
+        <p style="font-size:13px;font-weight:700;margin:0 0 4px">수동 단계 배포</p>
+        <p class="form-hint" style="margin-bottom:12px">서버를 순서대로 하나씩 실행합니다. 각 서버 완료를 확인한 뒤 다음을 진행하고, 모두 끝나면 완료 처리하세요.</p>
+        <div id="manual-server-list"></div>
+        <div style="display:flex;gap:12px;margin-top:16px">
+          <button class="btn btn-primary" id="manual-complete-btn" onclick="completeManualDeploy(true)" disabled>배포 완료 처리</button>
+          <button class="btn btn-ghost" onclick="completeManualDeploy(false)">실패 처리</button>
+        </div>
+      </div>
+
+      <div id="execution-flow-guide" role="note" aria-labelledby="execution-flow-guide-title" hidden style="margin-bottom:16px">
+        <div class="notice-box info" style="display:block">
+          <p id="execution-flow-guide-title" style="font-weight:700;margin:0 0 6px">실행 흐름 안내</p>
+          <p style="margin:0 0 10px">절차를 설명하는 안내입니다. 실제 서버·CI·이미지 검사는 실행하지 않습니다.</p>
+          <ol id="execution-flow-guide-steps" style="margin:0;padding-left:20px"></ol>
+        </div>
+      </div>
+      <div class="log-panel" id="deploy-log" style="min-height:200px">
+        <p style="color:#64748b" th:if="${execReady}">실행을 시작하면 실제 배포 로그가 여기에 표시됩니다.</p>
+        <p style="color:#64748b" th:if="${execLive}">배포가 진행 중입니다. 아래에서 실시간 로그를 확인하세요.</p>
+      </div>
+      <div style="display:flex;gap:12px;margin-top:16px" id="normal-exec">
+        <p class="form-hint" th:if="${retryReady}">승인된 계획과 이미지를 유지합니다. 같은 요청에서 이미 성공한 대상은 유지하고 실패·미실행 대상만 다시 배포합니다. CI 빌드를 다시 실행하지 않습니다.</p>
+        <button class="btn btn-warning" onclick="startRequestDeploy(true)" id="btn-retry-deploy" th:if="${canExecute and retryReady}">실패 대상 재시도</button>
+        <button class="btn btn-ghost" type="button" onclick="recoverRequestTraffic()" id="btn-recover-traffic" th:if="${canExecute and retryReady}">트래픽 복구</button>
+        <p class="form-hint" th:if="${canExecute and retryReady}">트래픽 복구는 서비스 상태를 확인한 뒤 이 요청이 제외한 nginx 연결만 복귀합니다. 이미지와 컨테이너를 교체하지 않습니다.</p>
+        <button class="btn btn-ghost" onclick="toggleRequestExecutionFlow(this)" aria-controls="execution-flow-guide" aria-expanded="false" th:if="${canExecute and execReady}">실행 흐름 안내</button>
+        <button class="btn btn-warning" onclick="startRequestDeploy()" id="btn-start-deploy" th:if="${canExecute and execReady}">실행 시작</button>
+        <button class="btn btn-ghost" type="button" id="btn-reconnect-logs" onclick="reconnectLogs()" th:hidden="${!execLive}">실시간 로그 다시 연결</button>
+      </div>
+    </div>
+
+    <!-- 전역 APPROVER 역할이 아니어도 이 프로젝트의 승인 권한이 있으면 처리할 수 있다.
+         판정은 ApprovalService.canApproveNow 한 곳에서만 한다(API 와 같은 기준). -->
+    <div class="section-card" th:if="${request.project.approvalPolicy != null and request.project.approvalPolicy.groupComposed}">
+      <p class="section-title">프로젝트·서버 그룹 승인 요건</p>
+      <div th:each="vipGroup : ${request.project.serverGroups}" th:if="${requestUsesWasVip == true and vipGroup.wasVipEnabled == true}" class="page-help">
+        <div><strong th:text="${'외부 WAS VIP: ' + vipGroup.name + ' / ' + vipGroup.wasVipAddress + ':' + request.project.wasVipPort}">외부 WAS VIP</strong>
+          <p>이 요청은 개별 WAS를 순서대로 교체하고 직접 헬스체크합니다. 외부 L4의 멤버 제외·복귀·세션 종료는 제어하지 않습니다. nginx에서 VIP 전체를 내려서는 안 되며, 무중단은 보장하지 않습니다. 승인 당시 VIP 설정과 연결된 nginx 정책은 실행 전 다시 확인합니다.</p>
+        </div>
+      </div>
+      <p class="form-hint">프로젝트 기본 정책 이후 선택한 그룹 ID 순서로 추가 정책을 모두 충족해야 합니다. 같은 정책은 한 번 적용합니다.
+        동일 승인자가 여러 단계에 있으면 각 단계에서 다시 승인해야 하며 한 번의 처리는 현재 단계 하나에만 적용됩니다.</p>
+      <p class="form-hint" th:text="${request.project.approvalPolicy.allowSelfApproval ? '모든 적용 정책이 자기 승인을 허용합니다.' : '적용 정책 중 자기 승인을 금지하는 정책이 있어 요청자는 승인할 수 없습니다.'}"></p>
+      <ul>
+        <li th:each="policy : ${request.project.approvalPolicy.requiredPolicies}"
+            th:text="${policy.name + ' · ' + policy.policyType + ' · 정책 ID ' + policy.id}"></li>
+      </ul>
+      <ul>
+        <li th:each="group : ${request.project.serverGroups}"
+            th:if="${group.approvalPolicyId != null}"
+            th:text="${group.name + ' → 추가 승인 정책 ID ' + group.approvalPolicyId}"></li>
+      </ul>
+      <div th:each="step : ${request.project.approvalPolicy.steps}" style="padding:8px 0;border-top:1px solid var(--border)">
+        <strong th:text="${step.stepOrder + '단계 · 필수 ' + step.requiredCount + '명'}"></strong>
+        <span th:text="${' · 원본 정책 ' + step.sourcePolicyId + (step.sourceStepOrder != null ? ' / 원본 ' + step.sourceStepOrder + '단계' : ' / 지정 승인자 통합')}"></span>
+        <span th:if="${approvalCurrentStepOrder != null and step.stepOrder == approvalCurrentStepOrder}" class="badge">현재 단계</span>
+        <div><span th:each="approver, iter : ${step.approvers}" th:text="${approver.name + (iter.last ? '' : ', ')}"></span></div>
+      </div>
+    </div>
+    <div th:if="${canApproveRequest}">
+    <div class="section-card" style="margin-bottom:16px;border:1px solid rgba(79,70,229,0.35)"
+         th:if="${request.status.name() == 'APPROVAL_PENDING'}">
+      <p class="section-title" style="margin-bottom:14px">승인 처리</p>
+      <div class="notice-box warning" style="margin-bottom:16px">
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
+          <span th:text="${request.environment.name() + ' 배포 승인입니다. 현재 단계의 대상과 산출물을 검토 후 처리하세요.'}">배포 승인</span>
+      </div>
+      <div th:unless="${publicDemo}" th:if="${aiEnabled}" id="ai-brief-card-wrap" th:data-request-id="${request.id}" style="margin-bottom:16px">
+        <p style="font-size:12px;font-weight:700;color:var(--primary);display:flex;align-items:center;gap:6px;margin-bottom:6px">
+          <img th:src="@{/img/assistant-mark.svg}" alt="" style="width:18px;height:18px;flex-shrink:0"> Assistant 승인 브리핑
+        </p>
+        <div id="ai-brief-result" class="ai-result">승인 참고 브리핑을 준비 중입니다…</div>
+      </div>
+      <script th:unless="${publicDemo}" th:if="${aiEnabled}">
+      (function () {
+        const wrap = document.getElementById('ai-brief-card-wrap');
+        if (!wrap) return;
+        const out = document.getElementById('ai-brief-result');
+        const csrf = document.querySelector('meta[name="_csrf"]').content;
+        const csrfH = document.querySelector('meta[name="_csrf_header"]').content;
+        fetch('/api/v1/ai/approver-brief/' + wrap.dataset.requestId, { method: 'POST', headers: { [csrfH]: csrf } })
+          .then(r => r.json())
+          .then(d => {
+            if (d.success) mdInto(out, d.data || d.message || '', { truncated: d.truncated });
+            else out.textContent = '⚠ ' + (d.message || '브리핑 실패');
+          })
+          .catch(() => { out.textContent = '브리핑 요청에 실패했습니다.'; });
+      })();
+      </script>
+      <div class="form-group" style="margin-bottom:16px">
+          <input type="hidden" id="approval-expected-step" th:value="${approvalCurrentStepOrder}">
+        <label class="form-label" for="approval-comment">의견 <span style="font-size:11px;color:var(--muted);font-weight:400;margin-left:4px">(반려 시 필수)</span></label>
+        <textarea class="form-textarea" id="approval-comment" rows="3" placeholder="승인 또는 반려 사유를 입력하세요."></textarea>
+      </div>
+      <div style="display:flex;gap:12px">
+        <button class="btn" style="background:var(--red-light);color:var(--red);border:1px solid rgba(220,38,38,0.25);font-weight:600"
+                th:data-id="${request.id}" onclick="processApproval(this.dataset.id, false)">반려</button>
+        <button class="btn btn-primary" th:data-id="${request.id}" onclick="processApproval(this.dataset.id, true)"
+                th:disabled="${prodRollbackBlockReason != null}">승인</button>
+      </div>
+    </div>
+    </div>
+
+    <div class="detail-columns" style="margin-bottom:16px">
+
+      <div class="section-card">
+        <p class="section-title" style="display:flex;align-items:center;gap:6px">
+          <span style="width:18px;height:18px;background:var(--primary-light);border-radius:4px;display:inline-flex;align-items:center;justify-content:center;font-size:11px">I</span>
+          요청 정보
+        </p>
+        <div class="info-grid">
+          <div class="info-row">
+            <span class="info-label">요청 번호</span>
+            <span class="info-val mono" th:text="${request.reqNo}">-</span>
+          </div>
+          <div class="info-row">
+            <span class="info-label">프로젝트</span>
+            <span class="info-val" th:text="${request.project.name}">-</span>
+          </div>
+          <div class="info-row">
+            <span class="info-label">요청 유형</span>
+            <span class="info-val" th:text="${isRollback ? '롤백 요청' : '배포 요청'}">배포 요청</span>
+          </div>
+          <div class="info-row">
+            <span class="info-label">배포 환경</span>
+            <span class="info-val">
+              <span class="env-badge" th:classappend="${request.environment.name() == 'PROD'} ? 'prod' : 'test'"
+                    th:text="${request.environment.name()}">-</span>
+            </span>
+          </div>
+          <div class="info-row">
+            <span class="info-label">배포 범위 / 전략</span>
+            <span class="info-val" th:text="${(request.deployScope?.name() == 'WAS_ONLY' ? 'WAS만 (API)' : (request.deployScope?.name() == 'WEB_ONLY' ? 'WEB만' : '환경 내 전체 매핑 대상'))
+                  + ' · '
+                  + (request.deployStrategy?.name() == 'WAVE' ? '호기별 웨이브' : (request.deployStrategy?.name() == 'MANUAL' ? '수동 단계' : '안전'))}">환경 내 전체 매핑 대상 · 안전</span>
+          </div>
+          <div class="info-row">
+            <span class="info-label">브랜치 / 태그</span>
+            <span class="info-val mono" style="display:flex;align-items:center;gap:6px">
+              <span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:var(--primary);flex-shrink:0"></span>
+              <span th:text="${request.branch ?: '-'}">main</span>
+            </span>
+          </div>
+          <div class="info-row">
+            <span class="info-label">요청자</span>
+            <span class="info-val" th:text="${request.requestedBy?.name ?: '-'}">-</span>
+          </div>
+          <div class="info-row">
+            <span class="info-label">요청 시각</span>
+            <span class="info-val" th:text="${request.createdAt != null ? #temporals.format(request.createdAt, 'yyyy-MM-dd HH:mm:ss') : '-'}">-</span>
+          </div>
+          <div class="info-row" th:if="${request.testConfirmedBy != null}">
+            <span class="info-label">TEST 확인</span>
+            <span class="info-val" style="color:var(--green);font-weight:600">
+              완료
+              <span th:text="${request.testConfirmedBy.name}">-</span>
+              <span style="color:var(--muted);font-weight:400;font-size:12px"
+                    th:text="${request.testConfirmedAt != null ? '(' + #temporals.format(request.testConfirmedAt, 'MM/dd HH:mm') + ')' : ''}"></span>
+            </span>
+          </div>
+        </div>
+      </div>
+
+      <div style="display:flex;flex-direction:column;gap:16px">
+
+        <div class="section-card">
+          <p class="section-title" style="display:flex;align-items:center;gap:6px">
+            <span style="width:18px;height:18px;background:var(--blue-light);border-radius:4px;display:inline-flex;align-items:center;justify-content:center;font-size:11px">CI</span>
+            CI/CD 메타데이터
+          </p>
+          <div class="info-grid">
+            <div class="info-row">
+              <span class="info-label">이미지 태그</span>
+              <span class="info-val">
+                <span class="tag-chip" th:text="${request.imageTag ?: '-'}">-</span>
+              </span>
+            </div>
+            <div class="info-row">
+              <span class="info-label">이미지 Digest</span>
+              <span class="info-val mono" th:text="${request.imageDigest ?: '-'}">-</span>
+            </div>
+            <div class="info-row">
+              <span class="info-label">GitLab 파이프라인 번호</span>
+              <span class="info-val mono" th:text="${request.gitlabPipelineId ?: '-'}">-</span>
+            </div>
+            <div class="info-row">
+              <span class="info-label">Commit SHA</span>
+              <span class="info-val mono" th:text="${request.commitSha ?: '-'}">-</span>
+            </div>
+          </div>
+        </div>
+
+        <div class="section-card" aria-labelledby="release-artifacts-title">
+          <p class="section-title" id="release-artifacts-title">릴리스 산출물</p>
+          <p style="color:var(--muted);font-size:12px;margin-bottom:12px">
+            TEST에서 확인한 산출물 묶음을 운영으로 승격합니다. 롤백은 원본 요청의 묶음을 사용합니다.
+            <span th:if="${request.releaseManifestSha256 == null}">기존 CI 출처는 대표 이미지 기준입니다. 새 묶음 빌드는 모든 배포 단위를 검증한 뒤 확정합니다.</span>
+            <span th:if="${request.releaseManifestSha256 != null}">같은 CI 작업의 모든 이미지와 Nexus 다이제스트를 검증한 묶음입니다.</span>
+          </p>
+          <p th:if="${request.imageDigest == null and request.sourceMrIid != null and (request.items == null or #lists.isEmpty(request.items))}"
+             style="color:var(--muted);font-size:12px;margin-bottom:12px" role="status">
+            승인된 MR의 CI가 배포 단위별 이미지를 빌드하고 다이제스트를 검증한 후 산출물 묶음을 한 번에 확정합니다. 아직 실행할 이미지가 확정된 상태가 아닙니다.
+          </p>
+          <p th:if="${request.releaseManifestSha256 != null}" class="mono" style="overflow-wrap:anywhere;font-size:12px;margin-bottom:12px"
+             th:text="${'묶음 증적 SHA-256: ' + request.releaseManifestSha256}"></p>
+          <div style="overflow-x:auto">
+            <table style="width:100%;font-size:12px">
+              <thead><tr><th scope="col">배포 단위</th><th scope="col">태그</th><th scope="col">고정 다이제스트</th></tr></thead>
+              <tbody>
+                <tr th:each="item : ${request.items}">
+                  <td th:text="${item.componentCode ?: item.componentId}">api</td>
+                  <td th:text="${item.imageTag ?: '-'}">release</td>
+                  <td class="mono" style="overflow-wrap:anywhere;min-width:180px" th:text="${item.imageDigest ?: '구 산출물: 불변 다이제스트 없음'}">sha256</td>
+                </tr>
+                <tr th:if="${request.items == null or #lists.isEmpty(request.items)}">
+                  <td>단일 이미지</td>
+                  <td th:text="${request.imageTag ?: '-'}">-</td>
+                  <td class="mono" style="overflow-wrap:anywhere;min-width:180px" th:text="${request.imageDigest ?: '빌드 대기 또는 구 산출물'}">-</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+        <div class="section-card" th:if="${(request.status.name() == 'TEST_FAILED' or request.status.name() == 'PROD_FAILED') and request.failureReason != null and !request.failureReason.isBlank()}"
+             style="border:1px solid rgba(220,38,38,0.3);background:rgba(220,38,38,0.04)">
+          <p class="section-title" style="color:var(--red)">실패 원인</p>
+          <p role="status" style="white-space:pre-wrap;overflow-wrap:anywhere" th:text="${request.failureReason}">배포 실행이 실패했습니다.</p>
+        </div>
+
+        <div class="section-card" th:if="${request.reason}">
+          <p class="section-title" style="display:flex;align-items:center;gap:6px">
+            <span style="width:18px;height:18px;background:var(--amber-light);border-radius:4px;display:inline-flex;align-items:center;justify-content:center;font-size:11px">R</span>
+            요청 사유
+          </p>
+          <div style="background:var(--bg);border-radius:var(--radius-sm);padding:14px 16px;font-size:13px;line-height:1.7;color:var(--text);border-left:3px solid var(--amber)"
+               th:text="${request.reason}">-</div>
+        </div>
+
+        <div class="section-card"
+             th:if="${(request.status.name() == 'TEST_FAILED' or request.status.name() == 'PROD_FAILED') and rollbackSuggestion != null}"
+             style="border:1px solid rgba(255,145,0,0.32);background:rgba(255,145,0,0.06)">
+          <div class="notice-box warning" style="margin-bottom:14px">
+            <span th:if="${rollbackSuggestionBlockReason == null}">실패 직전의 최신 안정 이미지로 롤백 승인 요청을 만들 수 있습니다.</span>
+            <span th:if="${rollbackSuggestionBlockReason != null}" th:text="${rollbackSuggestionBlockReason}">운영 롤백 출처 검증이 필요합니다.</span>
+          </div>
+          <div class="info-grid" style="margin-bottom:14px">
+            <div class="info-row">
+              <span class="info-label">추천 이미지 태그</span>
+              <span class="info-val"><span class="tag-chip" th:text="${rollbackSuggestion.imageTag}">main-123</span></span>
+            </div>
+            <div class="info-row">
+              <span class="info-label">추천 Digest</span>
+              <span class="info-val mono" th:text="${rollbackSuggestion.imageDigest ?: '-'}">sha256:...</span>
+            </div>
+            <div class="info-row">
+              <span class="info-label">브랜치</span>
+              <span class="info-val mono" th:text="${rollbackSuggestion.branch ?: '-'}">main</span>
+            </div>
+            <div class="info-row">
+              <span class="info-label">파이프라인</span>
+              <span class="info-val mono" th:text="${rollbackSuggestion.gitlabPipelineId ?: '-'}">24</span>
+            </div>
+          </div>
+          <button class="btn btn-primary" style="width:100%"
+                  th:data-rollback-id="${rollbackSuggestion.id}"
+                  th:data-environment="${request.environment.name()}"
+                  th:disabled="${rollbackSuggestionBlockReason != null}"
+                  onclick="requestRecommendedRollback(this.dataset.rollbackId, this.dataset.environment)">
+            최신 안정 이미지로 롤백 요청 생성
+          </button>
+        </div>
+
+        <div class="section-card" th:if="${canConfirmTest}"
+             style="border:1px solid rgba(79,70,229,0.3);background:var(--primary-light)">
+          <div class="notice-box info" style="margin-bottom:14px">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M12 8v4m0 4h.01"/></svg>
+            <span>TEST 배포가 완료되었습니다. 확인 완료 처리 후 PROD 승인 요청으로 진행할 수 있습니다.</span>
+          </div>
+          <button class="btn btn-primary" style="width:100%"
+                  th:onclick="'confirmTest(' + ${request.id} + ')'">
+            TEST 확인 완료 처리
+          </button>
+        </div>
+
+        <div id="request-status-history" class="section-card" style="flex:1">
+          <p class="section-title" style="display:flex;align-items:center;gap:6px">
+            <span style="width:18px;height:18px;background:var(--purple-light);border-radius:4px;display:inline-flex;align-items:center;justify-content:center;font-size:11px">H</span>
+            상태 이력
+          </p>
+          <div th:if="${#lists.isEmpty(request.statusHistories)}"
+               style="color:var(--muted);font-size:13px;text-align:center;padding:20px 0">이력이 없습니다.</div>
+          <div style="display:flex;flex-direction:column;gap:0" th:if="${!#lists.isEmpty(request.statusHistories)}">
+            <div th:each="h,iter : ${request.statusHistories}"
+                 style="display:flex;align-items:flex-start;gap:12px;padding:10px 0;border-bottom:1px solid var(--border)"
+                 th:style="${iter.last} ? 'display:flex;align-items:flex-start;gap:12px;padding:10px 0' : 'display:flex;align-items:flex-start;gap:12px;padding:10px 0;border-bottom:1px solid var(--border)'">
+              <div th:with="sn=${h.status.name()}"
+                   style="width:8px;height:8px;border-radius:50%;flex-shrink:0;margin-top:4px"
+                   th:style="${sn == 'COMPLETED' or sn == 'TEST_DEPLOYED' or sn == 'TEST_CONFIRMED' or sn == 'ROLLED_BACK'} ? 'width:8px;height:8px;border-radius:50%;flex-shrink:0;margin-top:4px;background:var(--green)' :
+                              (${sn == 'PROD_FAILED' or sn == 'TEST_FAILED' or sn == 'REJECTED'} ? 'width:8px;height:8px;border-radius:50%;flex-shrink:0;margin-top:4px;background:var(--red)' :
+                              (${sn == 'PROD_DEPLOYING' or sn == 'TEST_DEPLOYING' or sn == 'TEST_BUILDING'} ? 'width:8px;height:8px;border-radius:50%;flex-shrink:0;margin-top:4px;background:var(--primary)' :
+                              'width:8px;height:8px;border-radius:50%;flex-shrink:0;margin-top:4px;background:var(--amber)'))">
+              </div>
+              <div style="flex:1">
+                <p style="font-size:12px;font-weight:600;color:var(--text)" th:text="${h.status.label}">-</p>
+                <p style="font-size:11px;color:var(--muted);margin-top:1px"
+                   th:text="${h.createdAt != null ? #temporals.format(h.createdAt, 'MM/dd HH:mm:ss') : '-'}">-</p>
+              </div>
+            </div>
+          </div>
+        </div>
+
+      </div>
+    </div>
+
+    <div class="section-card" th:if="${!#lists.isEmpty(request.approvalRecords)}">
+      <p class="section-title" style="display:flex;align-items:center;gap:6px;margin-bottom:16px">
+        <span style="width:18px;height:18px;background:var(--purple-light);border-radius:4px;display:inline-flex;align-items:center;justify-content:center;font-size:11px">A</span>
+        승인 이력
+      </p>
+      <div style="display:flex;flex-direction:column;gap:10px">
+        <div th:each="r : ${request.approvalRecords}"
+             th:class="'appr-step-card ' + (${r.action.name() == 'APPROVED'} ? 'done' : '')">
+          <div class="appr-step-header">
+            <span class="step-num" th:text="${r.stepOrder + '단계'}">1단계</span>
+            <span class="step-type" th:text="${r.approver?.name ?: '미지정'}">승인자</span>
+            <span th:if="${r.action.name() == 'APPROVED'}"
+                  class="step-status"
+                  style="background:var(--green-light);color:var(--green)">승인</span>
+            <span th:if="${r.action.name() == 'REJECTED'}"
+                  class="step-status"
+                  style="background:var(--red-light);color:var(--red)">반려</span>
+            <span style="font-size:11px;color:var(--muted);margin-left:auto"
+                  th:text="${r.processedAt != null ? #temporals.format(r.processedAt, 'yyyy-MM-dd HH:mm') : '-'}">-</span>
+          </div>
+          <div th:if="${r.comment}" style="background:var(--bg);border-radius:var(--radius-xs);padding:8px 12px;font-size:12px;color:var(--text);line-height:1.6">
+            <span style="color:var(--muted);font-weight:600;margin-right:6px">의견</span>
+            <span th:text="${r.comment}">-</span>
+          </div>
+          <div th:unless="${r.comment}" style="font-size:12px;color:var(--muted)">의견 없음</div>
+        </div>
+      </div>
+    </div>
+
+  </div>
+
+  <script th:if="${request != null}" th:inline="javascript">
+  var REQUEST_DETAIL_PUBLIC_DEMO = /*[[${publicDemo == true}]]*/ false;
+  (function() {
+    const environment = '[[${request.environment.name()}]]';
+    const isRollback = /*[[${request.reason != null and #strings.startsWith(request.reason, '[ROLLBACK]')}]]*/ false;
+    const currentStatus = '[[${request.status.name()}]]';
+    const histories = [
+      /*[# th:each="h : ${request.statusHistories}"]*/
+      { status: '[[${h.status.name()}]]', time: '[[${h.createdAt != null ? #temporals.format(h.createdAt, "MM/dd HH:mm") : "-"}]]' },
+      /*[/]*/
+    ];
+
+    const statusLabelMap = {
+      TEST_REQUESTED: isRollback ? 'TEST 롤백 요청' : 'TEST 요청',
+      TEST_BUILDING: 'TEST 빌드 중',
+      TEST_DEPLOYING: isRollback ? 'TEST 롤백 배포 중' : 'TEST 배포 중',
+      TEST_DEPLOYED: isRollback ? 'TEST 롤백 완료' : 'TEST 배포 완료',
+      TEST_FAILED: isRollback ? 'TEST 롤백 실패' : 'TEST 배포 실패',
+      TEST_CONFIRMED: 'TEST 확인 완료',
+      APPROVAL_PENDING: isRollback ? '롤백 승인 대기' : '승인 대기',
+      APPROVAL_COMPLETED: isRollback ? '롤백 승인 완료' : '승인 완료',
+      REJECTED: isRollback ? '롤백 반려' : '반려',
+      CANCELLED: '요청 철회',
+      PROD_DEPLOYING: isRollback ? 'PROD 롤백 배포 중' : 'PROD 배포 중',
+      COMPLETED: 'PROD 배포 완료',
+      PROD_FAILED: isRollback ? 'PROD 롤백 실패' : 'PROD 배포 실패',
+      ROLLED_BACK: '롤백 완료'
+    };
+
+    const baseSteps = environment === 'TEST'
+      ? (isRollback
+        ? ['TEST_REQUESTED', 'TEST_DEPLOYING', 'ROLLED_BACK']
+        : ['TEST_REQUESTED', 'TEST_BUILDING', 'TEST_DEPLOYING', 'TEST_DEPLOYED', 'TEST_CONFIRMED'])
+      : (isRollback
+        ? ['APPROVAL_PENDING', 'APPROVAL_COMPLETED', 'PROD_DEPLOYING', 'ROLLED_BACK']
+        : ['APPROVAL_PENDING', 'APPROVAL_COMPLETED', 'PROD_DEPLOYING', 'COMPLETED']);
+    if (environment === 'TEST' && (currentStatus === 'APPROVAL_PENDING' || histories.some(history => history.status === 'APPROVAL_PENDING'))) {
+      baseSteps.unshift('APPROVAL_PENDING');
+    }
+
+    const failStates = ['TEST_FAILED', 'REJECTED', 'PROD_FAILED', 'CANCELLED'];
+    const steps = baseSteps.map(key => ({ key, label: statusLabelMap[key] || key }));
+
+    if (failStates.includes(currentStatus) && !baseSteps.includes(currentStatus)) {
+      steps.push({ key: currentStatus, label: statusLabelMap[currentStatus] || currentStatus });
+    }
+
+    const historyMap = {};
+    histories.forEach(history => {
+      historyMap[history.status] = history.time;
+    });
+
+    let reachedIndex = -1;
+    steps.forEach((step, index) => {
+      if (historyMap[step.key] !== undefined || step.key === currentStatus) {
+        reachedIndex = index;
+      }
+    });
+
+    const container = document.getElementById('status-tl');
+    steps.forEach((step, index) => {
+      if (index > 0) {
+        const line = document.createElement('div');
+        line.className = 'tl-line' + (index <= reachedIndex ? ' done' : '');
+        container.appendChild(line);
+      }
+
+      const isDone = historyMap[step.key] !== undefined && step.key !== currentStatus;
+      const isActive = step.key === currentStatus;
+      const isFail = failStates.includes(step.key);
+
+      const wrap = document.createElement('div');
+      wrap.className = 'tl-step';
+
+      const dot = document.createElement('div');
+      dot.className = 'tl-dot' + (isDone ? ' done' : '') + (isActive && !isFail ? ' active pulse' : '');
+      if (isActive && isFail) {
+        dot.style.cssText = 'border-color:var(--red);background:var(--red)';
+      }
+      if (step.key === 'ROLLED_BACK') {
+        dot.style.cssText = 'border-color:var(--green);background:var(--green)';
+      }
+
+      const label = document.createElement('div');
+      label.className = 'tl-label';
+
+      const title = document.createElement('span');
+      title.className = 'tl-title';
+      title.textContent = step.label;
+      if (isActive) {
+        title.style.color = isFail ? 'var(--red)' : 'var(--primary)';
+      }
+
+      const time = document.createElement('span');
+      time.className = 'tl-time';
+      time.textContent = historyMap[step.key] || (isActive ? '진행 중' : '');
+      if (isActive) {
+        time.style.color = isFail ? 'var(--red)' : 'var(--primary)';
+      }
+
+      label.appendChild(title);
+      label.appendChild(time);
+      wrap.appendChild(dot);
+      wrap.appendChild(label);
+      container.appendChild(wrap);
+    });
+  })();
+
+  /* 대상별 최신 결과와 명령 시도 이력을 분리한다. 연결선은 실행 순서를 뜻하지 않는다. */
+  function loadServerOutcomes() {
+    if (globalThis.REQUEST_DETAIL_PUBLIC_DEMO === true) return;
+    const wrap = document.getElementById('srv-flow-wrap');
+    const flow = document.getElementById('srv-flow');
+    const note = document.getElementById('srv-flow-note');
+    const attempts = document.getElementById('srv-attempts');
+    if (!wrap || !flow) return;
+    const rid = /*[[${request.id}]]*/ 0;
+    if (!rid) return;
+
+    return fetch('/api/v1/operator/logs/' + rid + '/servers')
+      .then(r => r.json())
+      .then(res => {
+        if (rid !== EXEC_REQUEST_ID || document.getElementById('srv-flow-wrap') !== wrap
+            || document.getElementById('srv-flow') !== flow || document.getElementById('srv-flow-note') !== note
+            || document.getElementById('srv-attempts') !== attempts) return;
+        const rows = (res && res.success && res.data && res.data.servers) || [];
+        if (!rows.length) return;      // 아직 명령이 나간 서버가 없으면 섹션 자체를 띄우지 않는다
+
+        const esc = s => String(s == null ? '' : s)
+          .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+
+        const summary = summarizeServerOutcomes(res.data.targets || [], rows);
+        flow.innerHTML = summary.targets.map((target, i) => {
+          const r = target.latest;
+          const link = '';
+          const cls = !r ? '' : r.success ? 'ok' : 'fail';
+          const txt = !r ? '명령 기록 없음' : r.success ? '성공' : ('실패' + (r.exitCode != null ? ' (exit ' + r.exitCode + ')' : ''));
+          if (!r) return '<span class="srv-seg">' + link + '<span class="srv-node"><span class="srv-name">' + esc(target.serverName) + '</span><span class="srv-res">' + txt + '</span></span></span>';
+          const dur = r.durationMs != null ? (Math.round(r.durationMs / 100) / 10) + '초' : '';
+          return '<span class="srv-seg">' + link
+            + '<span class="srv-node ' + cls + '">'
+            +   '<span class="srv-name">' + esc(r.serverName) + '</span>'
+            +   '<span class="srv-res">' + esc(txt) + '</span>'
+            +   (dur ? '<span style="font-size:10px;color:#94a3b8">' + dur + '</span>' : '')
+            + '</span></span>';
+        }).join('');
+
+        note.textContent = `대상 ${summary.targets.length}대 · 명령 시도 ${rows.length}회 · 최신 결과 성공 ${summary.succeeded}대 / 실패 ${summary.failed}대 / 기록 없음 ${summary.unrecorded}대`;
+        if (attempts) attempts.innerHTML = rows.map((r, i) => '<p>' + (i + 1) + '. ' + esc(r.serverName) + ' · ' + (r.success ? '성공' : '실패') + '</p>').join('');
+        wrap.style.display = '';
+      })
+      .catch(() => { /* 흐름도 보조 정보다 — 실패해도 화면을 막지 않는다 */ });
+  }
+  function summarizeServerOutcomes(targets, attempts) {
+    const latest = new Map();
+    attempts.slice().sort((a, b) => Number(a.attemptId || 0) - Number(b.attemptId || 0))
+      .forEach(row => latest.set(String(row.serverId), row));
+    const unique = new Map(targets.map(target => [String(target.serverId), target]));
+    attempts.forEach(row => {
+      if (!unique.has(String(row.serverId))) unique.set(String(row.serverId), row);
+    });
+    const result = Array.from(unique.values(), target => ({ ...target, latest: latest.get(String(target.serverId)) }));
+    return { targets: result, succeeded: result.filter(t => t.latest && t.latest.success).length,
+      failed: result.filter(t => t.latest && !t.latest.success).length, unrecorded: result.filter(t => !t.latest).length };
+  }
+  loadServerOutcomes();
+
+  // ===== 운영 실행 (상세 화면 통합) =====
+  var EXEC_REQUEST_ID = /*[[${request.id}]]*/ 0;
+  var EXEC_ENV = /*[[${request.environment.name()}]]*/ 'TEST';
+  var EXEC_HAS_BUILD_SOURCE = /*[[${request.sourceMrIid != null}]]*/ false;
+  var EXEC_IS_ROLLBACK = /*[[${request.reason != null and #strings.startsWith(request.reason, '[ROLLBACK]')}]]*/ false;
+  var EXEC_LIVE = /*[[${execLive ?: false}]]*/ false;
+  var execEventSource = null;
+  var execFinalStatus = null;
+
+  function execCsrf() {
+    return {
+      token: document.querySelector('meta[name="_csrf"]').content,
+      header: document.querySelector('meta[name="_csrf_header"]').content
+    };
+  }
+
+  function execActionLabel() {
+    if (EXEC_IS_ROLLBACK) {
+      return EXEC_ENV === 'PROD' ? 'PROD 롤백 배포' : 'TEST 롤백 배포';
+    }
+    return EXEC_ENV === 'PROD' ? 'PROD 배포' : (EXEC_HAS_BUILD_SOURCE ? 'TEST 빌드 + 배포' : 'TEST 이미지 배포');
+  }
+
+  function execAppendLog(message, color) {
+    const log = document.getElementById('deploy-log');
+    if (!log) return;
+    const line = document.createElement('p');
+    line.style.cssText = 'margin:2px 0;font-size:12px;color:' + (color || '#e2e8f0');
+    line.textContent = message;
+    log.appendChild(line);
+    log.scrollTop = log.scrollHeight;
+  }
+
+  function execAppendStatus(status) {
+    const log = document.getElementById('deploy-log');
+    if (!log) return;
+    const line = document.createElement('p');
+    line.style.cssText = 'margin:6px 0 2px;font-size:12px;font-weight:700';
+    if (status === 'SERVER_DONE') { line.style.color = '#34d399'; line.textContent = '서버 배포 완료 · 요청 완료 처리 대기'; }
+    else if (status === 'SERVER_FAILED') { line.style.color = '#f87171'; line.textContent = '서버 배포 실패'; }
+    else if (status === 'ROLLED_BACK') { line.style.color = '#34d399'; line.textContent = '롤백 완료'; }
+    else if (execIsSuccess(status)) { line.style.color = '#34d399'; line.textContent = '배포 완료'; }
+    else { line.style.color = '#f87171'; line.textContent = '배포 실패'; }
+    log.appendChild(line);
+    log.scrollTop = log.scrollHeight;
+  }
+
+  function execIsSuccess(status) {
+    return status === 'COMPLETED' || status === 'TEST_DEPLOYED' || status === 'ROLLED_BACK';
+  }
+
+  function execUpdateRequestStatus(status) {
+    const labels = {
+      TEST_REQUESTED: 'TEST 요청 접수', TEST_BUILDING: 'TEST 빌드 중',
+      TEST_DEPLOYING: 'TEST 배포 중', TEST_DEPLOYED: 'TEST 배포 완료',
+      TEST_FAILED: 'TEST 실패', TEST_CONFIRMED: 'TEST 확인 완료',
+      APPROVAL_PENDING: '승인 대기', APPROVAL_COMPLETED: '승인 완료 · 배포 대기',
+      REJECTED: '반려', CANCELLED: '요청 철회', PROD_DEPLOYING: '운영 배포 중',
+      COMPLETED: '배포 완료', PROD_FAILED: '운영 배포 실패', ROLLED_BACK: '롤백됨'
+    };
+    if (!Object.prototype.hasOwnProperty.call(labels, status)) return false;
+    if (execFinalStatus && ['COMPLETED', 'TEST_DEPLOYED', 'TEST_FAILED', 'PROD_FAILED', 'ROLLED_BACK', 'CANCELLED'].includes(execFinalStatus)
+        && ['TEST_REQUESTED', 'TEST_BUILDING', 'TEST_DEPLOYING', 'APPROVAL_PENDING', 'APPROVAL_COMPLETED', 'PROD_DEPLOYING'].includes(status)) return false;
+    const badge = document.getElementById('request-status-badge');
+    if (badge) {
+      badge.textContent = labels[status];
+      badge.className = 'status-badge lg ' + status.toLowerCase().replace(/_/g, '-');
+    }
+    const withdrawal = document.getElementById('request-withdrawal-card');
+    if (withdrawal && !['TEST_REQUESTED', 'APPROVAL_PENDING', 'APPROVAL_COMPLETED'].includes(status)) {
+      withdrawal.hidden = true;
+    }
+    return true;
+  }
+
+  function execCloseSource() {
+    if (typeof execMonitor !== 'undefined' && execMonitor) { execMonitor.stop(); execMonitor = null; }
+    if (execEventSource) { execEventSource.close(); execEventSource = null; }
+  }
+
+  function refreshExecutionSummary() {
+    const requestId = EXEC_REQUEST_ID;
+    const panel = document.getElementById('exec-panel');
+    return fetch('/deploy/request-detail?id=' + requestId)
+      .then(response => response.ok ? response.text() : null)
+      .then(html => {
+        if (!html || requestId !== EXEC_REQUEST_ID || document.getElementById('exec-panel') !== panel) return;
+        const fresh = new DOMParser().parseFromString(html, 'text/html');
+        ['request-progress', 'request-status-history'].forEach(id => {
+          const current = document.getElementById(id), replacement = fresh.getElementById(id);
+          if (current && replacement) current.replaceWith(replacement);
+        });
+      }).catch(() => {});
+  }
+
+  function toggleRequestExecutionFlow(button) {
+    const guide = document.getElementById('execution-flow-guide');
+    const steps = document.getElementById('execution-flow-guide-steps');
+    if (!guide || !steps) return;
+    if (!guide.hidden) {
+      guide.hidden = true;
+      button.setAttribute('aria-expanded', 'false');
+      return;
+    }
+    const lines = EXEC_IS_ROLLBACK
+      ? [
+          '실행 시작 시 요청의 실행 권한·상태와 저장된 배포 계획을 확인합니다.',
+          '저장된 이미지 태그와 Digest를 기준으로 롤백합니다.',
+          EXEC_ENV === 'TEST'
+            ? 'TEST 롤백은 GitLab 빌드를 생략하고 기존 이미지로 배포합니다.'
+            : 'PROD 롤백은 승인 완료 요청에 대해 기존 이미지로 배포합니다.',
+          '승인 계획에 고정된 제어 방식으로 대상 서버의 배포 작업을 실행합니다.',
+          '실제 실행의 진행 상태와 결과는 배포 로그에 표시됩니다.'
+        ]
+      : [
+          '실행 시작 시 요청의 실행 권한·상태와 저장된 배포 계획을 확인합니다.',
+          EXEC_ENV === 'TEST' && EXEC_HAS_BUILD_SOURCE
+            ? 'TEST 빌드 요청은 GitLab 파이프라인을 실행하고 성공한 빌드의 이미지 메타데이터를 확인합니다.'
+            : EXEC_ENV === 'TEST'
+              ? 'TEST 이미지 요청은 고정된 이미지 태그와 Digest를 사용합니다.'
+              : 'PROD 요청은 승인된 TEST 확인 이미지 메타데이터를 사용합니다.',
+          '승인 계획에 고정된 제어 방식으로 대상 서버의 배포 작업을 실행합니다.',
+          '실제 실행의 진행 상태와 결과는 배포 로그에 표시됩니다.'
+        ];
+    steps.replaceChildren();
+    lines.forEach(message => {
+      const item = document.createElement('li');
+      item.textContent = message;
+      steps.appendChild(item);
+    });
+    guide.hidden = false;
+    button.setAttribute('aria-expanded', 'true');
+  }
+
+  var execMonitor = null;
+
+  // Read-only observer: reconnecting never repeats execute/retry POST requests.
+  function createExecutionMonitor(io) {
+    const terminal = status => ['COMPLETED', 'TEST_DEPLOYED', 'TEST_CONFIRMED', 'TEST_FAILED',
+      'PROD_FAILED', 'ROLLED_BACK', 'CANCELLED', 'REJECTED'].includes(status);
+    const running = status => ['TEST_BUILDING', 'TEST_DEPLOYING', 'PROD_DEPLOYING'].includes(status);
+    const delays = [1000, 2000, 4000, 8000, 16000, 30000];
+    let source = null, pollTimer = null, retryTimer = null, stopped = false;
+    let retryCount = 0, queryFailures = 0, polling = false, generation = 0, connectionCount = 0;
+    let controller = null, finished = false, statusRevision = 0;
+    let accepted = !io.awaitAcceptance;
+    let unconfirmedTerminalQueries = 0;
+    const valid = () => !stopped && io.current();
+    function closeStream() {
+      if (source) { source.close(); source = null; io.source(null); }
+    }
+    function clearTimers() {
+      if (pollTimer !== null) io.clearTimer(pollTimer);
+      if (retryTimer !== null) io.clearTimer(retryTimer);
+      pollTimer = retryTimer = null;
+    }
+    function stop() {
+      if (stopped) return;
+      stopped = true; generation++; clearTimers(); closeStream();
+      if (controller) controller.abort();
+      io.cleanup();
+    }
+    function finish(status) {
+      if (!valid() || finished) return;
+      finished = true; io.status(status); stop(); io.done(status);
+    }
+    function schedulePoll(delay) {
+      if (!valid() || io.hidden() || pollTimer !== null) return;
+      pollTimer = io.timer(() => { pollTimer = null; query(); }, delay);
+    }
+    async function query() {
+      if (!valid()) { stop(); return; }
+      if (io.hidden() || polling) return;
+      const version = generation, revision = statusRevision;
+      polling = true;
+      const requestController = io.abortController();
+      controller = requestController;
+      const timeout = io.timer(() => requestController.abort(), 10000);
+      try {
+        const response = await io.read(requestController.signal);
+        if (!valid() || version !== generation) return;
+        if (response.unauthorized) { stop(); io.notice('상태 조회 권한 또는 로그인이 만료됐습니다. 다시 로그인해 주세요.'); return; }
+        if (!response.status) throw new Error('상태 응답 없음');
+        queryFailures = 0;
+        // A lost POST response can hide a short execution entirely. Without an
+        // attempt identifier, repeated terminal snapshots cannot prove acceptance.
+        // Bound this ambiguity instead of polling forever or repeating the POST.
+        if (!accepted && terminal(response.status)) {
+          if (++unconfirmedTerminalQueries >= 6) {
+            stop();
+            io.notice('실행 요청의 수락 여부를 확인하지 못했습니다. 실행을 다시 누르지 말고 실시간 로그 다시 연결로 현재 상태와 실행 이력을 확인해 주세요.');
+          }
+          return;
+        }
+        // A response started before a newer SSE status must not move the UI backwards.
+        if (revision === statusRevision) {
+          if (terminal(response.status)) { if (accepted) finish(response.status); return; }
+          if (running(response.status)) accepted = true;
+          io.status(response.status);
+        }
+      } catch (error) {
+        if (valid() && version === generation && !io.hidden()) {
+          queryFailures++;
+          if (queryFailures >= 6) {
+            stop(); io.notice('상태 조회 연결을 복구하지 못했습니다. 실시간 로그 다시 연결을 눌러 확인해 주세요.');
+            return;
+          }
+        }
+      } finally {
+        io.clearTimer(timeout);
+        if (version === generation) {
+          polling = false; controller = null;
+          schedulePoll(queryFailures ? delays[Math.min(queryFailures - 1, delays.length - 1)] : 10000);
+        }
+      }
+    }
+    function reconnect() {
+      if (!valid() || io.hidden() || retryTimer !== null || retryCount >= delays.length) return;
+      retryTimer = io.timer(() => { retryTimer = null; connect(); }, delays[retryCount++]);
+    }
+    function connect() {
+      if (!valid()) { stop(); return; }
+      if (io.hidden()) return;
+      closeStream();
+      const current = io.open();
+      source = current; io.source(current);
+      let replaceReplay = connectionCount++ > 0;
+      const currentStream = () => valid() && source === current;
+      current.addEventListener('log', event => {
+        if (!currentStream()) return;
+        // The server replays its bounded recent buffer without event IDs. Replace
+        // the old view once, on the first replayed log, instead of appending duplicates.
+        if (replaceReplay) { io.clearLogs(); replaceReplay = false; }
+        io.log(event.data);
+      });
+      current.addEventListener('status', event => {
+        if (!currentStream()) return;
+        statusRevision++;
+        if (terminal(event.data)) { if (accepted) finish(event.data); return; }
+        if (running(event.data)) accepted = true;
+        io.status(event.data);
+      });
+      current.addEventListener('done', () => {
+        if (!currentStream()) return;
+        closeStream();
+        if (io.batchDone) io.batchDone();
+        query(); reconnect();
+      });
+      current.onerror = () => {
+        if (!currentStream()) return;
+        closeStream();
+        io.notice('실시간 연결을 복구하며 서버 상태를 확인합니다. 재연결 시 보관된 최근 로그로 갱신합니다.');
+        query(); reconnect();
+      };
+      schedulePoll(2000);
+    }
+    function visibility() {
+      if (!valid()) { stop(); return; }
+      generation++; clearTimers(); closeStream();
+      if (controller) controller.abort();
+      controller = null; polling = false;
+      if (!io.hidden()) { retryCount = 0; queryFailures = 0; connect(); query(); }
+    }
+    function accept(status) {
+      if (!valid()) return;
+      accepted = true; statusRevision++; generation++;
+      if (controller) controller.abort();
+      controller = null; polling = false;
+      if (pollTimer !== null) io.clearTimer(pollTimer);
+      pollTimer = null;
+      if (status && !terminal(status)) io.status(status);
+      query();
+    }
+    connect();
+    return { stop, visibility, query, accept };
+  }
+
+  function execBindSource(onDone, options = {}) {
+    if (globalThis.REQUEST_DETAIL_PUBLIC_DEMO === true) return;
+    execCloseSource();
+    const reconnectButton = document.getElementById('btn-reconnect-logs');
+    if (reconnectButton) reconnectButton.hidden = false;
+    const requestId = EXEC_REQUEST_ID, panel = document.getElementById('exec-panel');
+    let observer = null, visibilityListener, unloadListener, ownedSource = null;
+    const io = {
+      current: () => requestId === EXEC_REQUEST_ID && document.getElementById('exec-panel') === panel,
+      awaitAcceptance: !!options.awaitAcceptance,
+      hidden: () => !!document.hidden,
+      timer: (fn, delay) => setTimeout(fn, delay), clearTimer: id => clearTimeout(id),
+      abortController: () => new AbortController(),
+      source: source => {
+        if (source || execEventSource === ownedSource) execEventSource = source;
+        ownedSource = source;
+      },
+      open: () => new EventSource('/api/v1/operator/logs/' + requestId),
+      read: async signal => {
+        const response = await fetch('/api/v1/deploy-requests/' + requestId, { signal, cache: 'no-store' });
+        if (response.status === 401 || response.status === 403) return { unauthorized: true };
+        const body = await response.json();
+        return { status: response.ok && body.success && body.data ? body.data.status : null };
+      },
+      status: status => {
+        if (execUpdateRequestStatus(status)) execFinalStatus = status;
+        if (status === 'SERVER_DONE' || status === 'SERVER_FAILED') execAppendStatus(status);
+        if (options.onStatus) options.onStatus(status);
+        if (document.getElementById('manual-steps') && typeof loadExecTargets === 'function') loadExecTargets();
+      },
+      log: message => execAppendLog(message, '#e2e8f0'),
+      clearLogs: () => { const log = document.getElementById('deploy-log'); if (log) log.innerHTML = ''; },
+      notice: message => execAppendLog('[상태 확인] ' + message, '#fbbf24'),
+      batchDone: options.onBatchDone,
+      done: () => {
+        if (typeof loadServerOutcomes === 'function') loadServerOutcomes();
+        if (typeof refreshExecutionSummary === 'function') refreshExecutionSummary();
+        if (onDone) onDone();
+      },
+      cleanup: () => {
+        if (visibilityListener) document.removeEventListener('visibilitychange', visibilityListener);
+        if (unloadListener) window.removeEventListener('pagehide', unloadListener);
+        if (observer) observer.disconnect();
+      }
+    };
+    const monitor = createExecutionMonitor(io);
+    execMonitor = monitor;
+    visibilityListener = () => monitor.visibility();
+    unloadListener = () => monitor.stop();
+    if (document.addEventListener) document.addEventListener('visibilitychange', visibilityListener);
+    if (typeof window !== 'undefined') window.addEventListener('pagehide', unloadListener);
+    if (typeof MutationObserver !== 'undefined' && panel) {
+      observer = new MutationObserver(() => { if (!io.current()) monitor.stop(); });
+      observer.observe(document.body, { childList: true, subtree: true });
+    }
+  }
+
+  function execRefreshLater(delay) {
+    const requestId = EXEC_REQUEST_ID, panel = document.getElementById('exec-panel');
+    setTimeout(() => {
+      if (requestId === EXEC_REQUEST_ID && document.getElementById('exec-panel') === panel && !document.hidden) {
+        navigate('request-detail', requestId);
+      }
+    }, delay);
+  }
+
+  function reconnectLogs() {
+    document.getElementById('deploy-log').innerHTML = '';
+    execBindSource(() => execRefreshLater(1200));
+  }
+
+  function recoverRequestTraffic() {
+    openConfirm('프로젝트 트래픽 복구', '이 요청의 정상 서비스로 트래픽을 복귀하시겠습니까? 복구 후 배포 완료 상태는 실패 대상 재시도로 확인합니다.', async () => {
+      const button = document.getElementById('btn-recover-traffic'); button.disabled = true;
+      const csrf = execCsrf();
+      try {
+        execFinalStatus = null;
+        execBindSource(() => execRefreshLater(800), { awaitAcceptance: true });
+        const response = await fetch('/api/v1/operator/traffic-recover/' + EXEC_REQUEST_ID, {
+          method: 'POST', headers: { [csrf.header]: csrf.token }
+        });
+        const result = await response.json();
+        if (!response.ok || !result.success) throw new Error(result.message || '트래픽 복구를 시작하지 못했습니다.');
+        showToast(result.message, 'success');
+        if (execMonitor) execMonitor.accept(result.data && result.data.status);
+      } catch (error) { execCloseSource(); showToast(error.message, 'error'); button.disabled = false; }
+    });
+  }
+
+  function startRequestDeploy(retry = false) {
+    openConfirm(retry ? '실패 대상 재시도' : EXEC_ENV + (EXEC_IS_ROLLBACK ? ' 롤백 실행' : ' 실행'),
+      retry ? '승인된 계획으로 실패·미실행 대상만 다시 배포하시겠습니까? 이미 성공한 대상과 기존 실행 이력은 유지됩니다.' : execActionLabel() + ' 작업을 시작하시겠습니까?', () => {
+      const log = document.getElementById('deploy-log');
+      const btn = document.getElementById(retry ? 'btn-retry-deploy' : 'btn-start-deploy');
+      const csrf = execCsrf();
+      log.innerHTML = '';
+      execFinalStatus = null;
+      if (btn) { btn.classList.add('loading'); btn.disabled = true; }
+
+      execBindSource(() => {
+        if (btn) { btn.classList.remove('loading'); btn.disabled = false; }
+        if (execIsSuccess(execFinalStatus)) {
+          showToast(execFinalStatus === 'ROLLED_BACK' ? '롤백이 완료되었습니다.' : (execActionLabel() + '이(가) 완료되었습니다.'), 'success');
+        } else if (execFinalStatus) {
+          showToast(execActionLabel() + '이(가) 실패했습니다.', 'error');
+        } else {
+          showToast('실행 로그 연결이 종료되었습니다. 상태를 다시 확인해 주세요.', 'warn');
+        }
+        execRefreshLater(1200);
+      }, { awaitAcceptance: retry });
+
+      fetch('/api/v1/operator/' + (retry ? 'retry/' : 'execute/') + EXEC_REQUEST_ID, {
+        method: 'POST', headers: { [csrf.header]: csrf.token }
+      })
+        .then(r => r.json())
+        .then(data => {
+          if (!data.success) {
+            execCloseSource();
+            if (btn) { btn.classList.remove('loading'); btn.disabled = false; }
+            showToast(data.message || (execActionLabel() + ' 시작 실패'), 'error');
+          } else if (retry && execMonitor) {
+            execMonitor.accept(data.data && data.data.status);
+          } else if (!execFinalStatus && data.data) {
+            // 최종 SSE가 먼저 도착한 경우 시작 응답으로 상태를 되돌리지 않는다.
+            execUpdateRequestStatus(data.data.status);
+          }
+        })
+        .catch(() => {
+          // The POST may already have been accepted. Observe GET state; never resend it.
+          if (btn) btn.classList.remove('loading');
+          showToast('실행 응답을 받지 못했습니다. 요청을 반복하지 않고 서버 상태를 확인합니다.', 'warn');
+          if (execMonitor) execMonitor.query();
+        });
+    });
+  }
+
+  // MANUAL(수동 단계) 배포
+  function loadExecTargets() {
+    if (globalThis.REQUEST_DETAIL_PUBLIC_DEMO === true) return;
+    const requestId = EXEC_REQUEST_ID;
+    const panel = document.getElementById('exec-panel');
+    const manualBox = document.getElementById('manual-steps');
+    const normalBox = document.getElementById('normal-exec');
+    if (!manualBox) return;
+    return fetch('/api/v1/operator/targets/' + requestId)
+      .then(r => r.json())
+      .then(d => {
+        if (requestId !== EXEC_REQUEST_ID || document.getElementById('exec-panel') !== panel
+            || document.getElementById('manual-steps') !== manualBox) return;
+        if (!d.success || !d.data) return;
+        execUpdateRequestStatus(d.data.status);
+        if (d.data.strategy === 'MANUAL') {
+          renderManualSteps(d.data.targets || []);
+          manualBox.style.display = 'block';
+          if (normalBox) normalBox.style.display = 'none';
+        }
+      })
+      .catch(() => {});
+  }
+
+  function renderManualSteps(targets) {
+    const list = document.getElementById('manual-server-list');
+    list.innerHTML = '';
+    if (!targets.length) {
+      const p = document.createElement('p');
+      p.className = 'form-hint';
+      p.textContent = '대상 서버가 없습니다.';
+      list.appendChild(p);
+      return;
+    }
+    let allSucceeded = targets.length > 0;
+    targets.forEach((t, i) => {
+      const row = document.createElement('div');
+      row.style.cssText = 'display:flex;align-items:center;gap:12px;padding:8px 0;border-bottom:1px solid var(--border)';
+      row.dataset.serverId = t.id;
+      const idx = document.createElement('span');
+      idx.style.cssText = 'min-width:24px;color:var(--muted)';
+      idx.textContent = (i + 1);
+      const info = document.createElement('span');
+      info.style.cssText = 'min-width:220px';
+      const nameEl = document.createElement('strong');
+      nameEl.textContent = t.name;
+      const metaEl = document.createElement('span');
+      metaEl.className = 'form-hint';
+      metaEl.textContent = ' ' + (t.type || '') + ' · ' + (t.ip || '');
+      info.appendChild(nameEl);
+      info.appendChild(metaEl);
+      const status = document.createElement('span');
+      status.className = 'manual-status form-hint';
+      status.style.flex = '1';
+      const state = t.status || 'PENDING';
+      const labels = { PENDING: '대기', RUNNING: '실행 중', SUCCESS: '완료', FAILED: '실패' };
+      status.textContent = labels[state] || state;
+      if (state === 'SUCCESS') status.style.color = 'var(--success)';
+      if (state === 'FAILED') status.style.color = 'var(--danger)';
+      if (state === 'RUNNING') status.style.color = 'var(--warning)';
+      if (t.errorMessage) status.title = t.errorMessage;
+      allSucceeded = allSucceeded && state === 'SUCCESS';
+      const btn = document.createElement('button');
+      btn.className = 'btn btn-warning sm';
+      btn.textContent = state === 'FAILED' ? '다시 실행' : state === 'SUCCESS' ? '완료' : '실행';
+      btn.disabled = state === 'RUNNING' || state === 'SUCCESS';
+      btn.onclick = () => executeServerStep(t.id, btn);
+      row.appendChild(idx); row.appendChild(info); row.appendChild(status); row.appendChild(btn);
+      list.appendChild(row);
+    });
+    const completeBtn = document.getElementById('manual-complete-btn');
+    if (completeBtn) completeBtn.disabled = !allSucceeded;
+  }
+
+  function executeServerStep(serverId, btn) {
+    const requestId = EXEC_REQUEST_ID;
+    const panel = document.getElementById('exec-panel');
+    const manualBox = document.getElementById('manual-steps');
+    const isCurrentPage = () => requestId === EXEC_REQUEST_ID
+      && document.getElementById('exec-panel') === panel && document.getElementById('manual-steps') === manualBox;
+    const row = btn.closest('[data-server-id]');
+    const statusEl = row.querySelector('.manual-status');
+    const nameText = row.querySelector('strong').textContent;
+    const csrf = execCsrf();
+    btn.disabled = true; btn.classList.add('loading');
+    statusEl.textContent = '실행 중...'; statusEl.style.color = 'var(--warning)';
+
+    const updateManualResult = () => {
+      if (!isCurrentPage()) return;
+      btn.classList.remove('loading');
+      if (statusEl.textContent === '완료') { showToast(nameText + ' 배포 완료', 'success'); }
+      else if (statusEl.textContent === '실패') { btn.disabled = false; showToast(nameText + ' 배포 실패', 'error'); }
+      loadExecTargets();
+      loadServerOutcomes();
+      refreshExecutionSummary();
+    };
+    execBindSource(updateManualResult, {
+      onStatus: status => {
+        if (!isCurrentPage()) return;
+        if (status === 'SERVER_DONE') { statusEl.textContent = '완료'; statusEl.style.color = 'var(--success)'; }
+        else if (status === 'SERVER_FAILED') { statusEl.textContent = '실패'; statusEl.style.color = 'var(--danger)'; }
+      },
+      onBatchDone: updateManualResult
+    });
+    const source = execEventSource;
+
+    fetch('/api/v1/operator/execute-server/' + requestId + '/' + serverId, {
+      method: 'POST', headers: { [csrf.header]: csrf.token }
+    })
+      .then(r => r.json())
+      .then(d => {
+        if (!isCurrentPage()) { if (source) source.close(); return; }
+        if (d.success) {
+          if (!execFinalStatus) execUpdateRequestStatus(d.data && d.data.status);
+          refreshExecutionSummary();
+        } else {
+          execCloseSource();
+          btn.classList.remove('loading'); btn.disabled = false;
+          statusEl.textContent = '실패'; statusEl.style.color = 'var(--danger)';
+          showToast(d.message || '실행 실패', 'error');
+        }
+      })
+      .catch(() => {
+        if (!isCurrentPage()) { if (source) source.close(); return; }
+        btn.classList.remove('loading');
+        showToast('실행 응답을 받지 못했습니다. 서버 상태를 확인하며 실행 요청은 반복하지 않습니다.', 'warn');
+        loadExecTargets();
+        if (execMonitor) execMonitor.query();
+      });
+  }
+
+  function completeManualDeploy(success) {
+    const csrf = execCsrf();
+    // 수동 완료/실패는 엔진 판정을 사람이 덮어쓰는 행위 — 서버가 사유를 강제한다.
+    const reason = window.prompt(success
+      ? '완료 처리 사유를 입력하세요. (필수 — 감사로그에 기록됩니다)'
+      : '실패 처리 사유를 입력하세요. (필수 — 감사로그에 기록됩니다)');
+    if (reason === null) return;
+    if (!reason.trim()) { showToast('사유를 입력해야 합니다.', 'error'); return; }
+    openConfirm(
+      success ? '배포 완료 처리' : '배포 실패 처리',
+      success ? '모든 서버 배포를 마치고 완료 처리하시겠습니까?' : '이 배포를 실패로 처리하시겠습니까?',
+      () => {
+        fetch('/api/v1/operator/complete/' + EXEC_REQUEST_ID, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', [csrf.header]: csrf.token },
+          body: JSON.stringify({ success: success, reason: reason.trim() })
+        })
+          .then(r => r.json())
+          .then(d => {
+            if (d.success) {
+              showToast(success ? '배포가 완료 처리되었습니다.' : '실패 처리되었습니다.', success ? 'success' : 'warn');
+              setTimeout(() => navigate('request-detail', EXEC_REQUEST_ID), 1000);
+            } else {
+              showToast(d.message || '처리 실패', 'error');
+            }
+          })
+          .catch(() => showToast('네트워크 오류가 발생했습니다.', 'error'));
+      }
+    );
+  }
+
+  // 패널이 있으면 MANUAL 여부 확인. 이미 진행 중이면 실시간 로그 자동 연결.
+  if (document.getElementById('exec-panel')) {
+    loadExecTargets();
+    if (EXEC_LIVE) { reconnectLogs(); }
+  }
+
+  function withdrawRequest(id) {
+    const reason = document.getElementById('withdrawal-reason').value.trim();
+    if (!reason || reason.length > 400) {
+      showToast('철회 사유를 400자 이하로 입력해 주세요.', 'error');
+      return;
+    }
+    openConfirm('배포 요청 철회', '이 대기 요청을 종료하시겠습니까? 다시 배포하려면 새 요청을 생성해야 합니다.', () => {
+      const btn = document.getElementById('btn-withdraw-request');
+      btn.disabled = true;
+      const csrfToken = document.querySelector('meta[name="_csrf"]').content;
+      const csrfHeader = document.querySelector('meta[name="_csrf_header"]').content;
+      fetch('/api/v1/deploy-requests/' + id + '/withdraw', {
+        method: 'POST', headers: { 'Content-Type': 'application/json', [csrfHeader]: csrfToken },
+        body: JSON.stringify({ reason })
+      }).then(response => response.json()).then(data => {
+        if (data.success) {
+          showToast('배포 요청이 철회되었습니다.', 'success');
+          navigate('request-detail', id);
+        } else { showToast(data.message || '요청을 철회할 수 없습니다.', 'error'); }
+      }).catch(() => showToast('네트워크 오류가 발생했습니다.', 'error'))
+        .finally(() => { btn.disabled = false; });
+    });
+  }
+
+  function confirmTest(id) {
+    const csrfToken = document.querySelector('meta[name="_csrf"]').content;
+    const csrfHeader = document.querySelector('meta[name="_csrf_header"]').content;
+
+    openConfirm('TEST 확인 완료', 'TEST 배포를 확인 완료 처리하시겠습니까?', () => {
+      fetch('/api/v1/deploy-requests/' + id + '/confirm-test', {
+        method: 'POST',
+        headers: { [csrfHeader]: csrfToken }
+      })
+      .then(response => response.json())
+      .then(data => {
+        if (data.success) {
+          showToast('TEST 확인 완료 처리되었습니다.', 'success');
+          navigate('request-detail', id);
+        } else {
+          showToast(data.message || '오류가 발생했습니다.', 'error');
+        }
+      })
+      .catch(() => {
+        showToast('네트워크 오류가 발생했습니다.', 'error');
+      });
+    });
+  }
+
+  function processApproval(id, isApprove) {
+    const commentEl = document.getElementById('approval-comment');
+    const comment = commentEl ? commentEl.value.trim() : '';
+    const expectedStepValue = document.getElementById('approval-expected-step')?.value;
+    const expectedStepOrder = expectedStepValue ? Number(expectedStepValue) : null;
+    if (!isApprove && !comment) {
+      showToast('반려 시 사유를 입력하세요.', 'error');
+      return;
+    }
+    const action = isApprove ? '승인' : '반려';
+    openConfirm(action + ' 처리', '이 배포 요청을 ' + action + ' 처리하시겠습니까?', () => {
+      const csrfToken = document.querySelector('meta[name="_csrf"]').content;
+      const csrfHeader = document.querySelector('meta[name="_csrf_header"]').content;
+      fetch('/api/v1/approvals/' + id + (isApprove ? '/approve' : '/reject'), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', [csrfHeader]: csrfToken },
+        body: JSON.stringify({ comment: comment, expectedStepOrder: expectedStepOrder })
+      })
+        .then(async r => ({ ...(await r.json()), httpStatus: r.status }))
+        .then(data => {
+          if (data.success) {
+            showToast(action + ' 처리되었습니다.', 'success');
+            navigate('request-detail', id);
+          } else {
+            showToast(data.message || (action + ' 실패'), 'error');
+            if (data.httpStatus === 409) navigate('request-detail', id);
+          }
+        })
+        .catch(() => showToast('처리 결과를 확인하지 못했습니다. 현재 화면을 다시 조회해 승인 이력과 단계를 확인하세요. 요청을 자동 재전송하지 않습니다.', 'error'));
+    });
+  }
+
+  function requestRecommendedRollback(historyId, environment) {
+    const csrfToken = document.querySelector('meta[name="_csrf"]').content;
+    const csrfHeader = document.querySelector('meta[name="_csrf_header"]').content;
+
+    openConfirm('롤백 요청 생성', '추천된 안정 이미지로 롤백 요청을 생성하시겠습니까?', () => {
+      fetch('/api/v1/deploy-requests/rollback', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          [csrfHeader]: csrfToken
+        },
+        body: JSON.stringify({
+          historyId: Number(historyId),
+          environment,
+          reason: '자동 제안 롤백 - 실패 직전 안정 이미지로 복구'
+        })
+      })
+      .then(response => response.json())
+      .then(data => {
+        if (data.success) {
+          showToast('롤백 요청이 생성되었습니다.', 'success');
+          navigate('request-detail', data.data?.id || null);
+        } else {
+          showToast(data.message || '롤백 요청 생성 실패', 'error');
+        }
+      })
+      .catch(() => {
+        showToast('네트워크 오류가 발생했습니다.', 'error');
+      });
+    });
+  }
+  function loadPersistedExecutionLogs() {
+    const panel = document.getElementById('persisted-execution-log-panel');
+    if (!panel || panel.dataset.loading === 'true') return;
+    const id = panel.dataset.requestId;
+    if (!/^[1-9][0-9]*$/.test(id || '')) return;
+    const status = document.getElementById('persisted-execution-log-status');
+    const text = document.getElementById('persisted-execution-log-text');
+    if (!status || !text) return;
+    panel.dataset.loading = 'true'; status.textContent = '저장된 로그를 불러오는 중입니다.';
+    const alive = () => document.getElementById('persisted-execution-log-panel') === panel
+      && panel.dataset.requestId === id && document.getElementById('persisted-execution-log-text') === text;
+    return fetch('/api/v1/operator/logs/' + id + '/persisted?limit=20')
+      .then(r => { if (!r.ok) throw new Error('조회 실패'); return r.json(); })
+      .then(res => {
+        if (!alive()) return;
+        if (!res || res.success !== true || !res.data || String(res.data.requestId) !== id || !Array.isArray(res.data.records)) throw new Error('조회 실패');
+        const rows = res.data.records.slice(-20);
+        let truncated = false;
+        const output = rows.map(row => {
+          truncated = truncated || row.truncated === true;
+          return '[' + String(row.serverName || '') + '] ' + (row.success === true ? '성공' : '실패')
+            + ' (exit ' + String(row.exitCode == null ? '-' : row.exitCode) + ')\n'
+            + String(row.command || '') + '\n' + String(row.stdout || '')
+            + (row.stderr ? '\n[stderr]\n' + String(row.stderr) : '');
+        }).join('\n\n');
+        text.textContent = output.slice(0, 262144);
+        status.textContent = !rows.length ? '저장된 원격 명령 기록이 없습니다. 빌드 단계에서 중단됐다면 실패 원인과 CI 로그를 확인하세요.'
+          : (truncated || output.length > 262144 ? '저장된 실행 로그 일부를 표시했습니다. 출력 한도에 도달했습니다.' : '저장된 실행 로그를 불러왔습니다.');
+      })
+      .catch(() => { if (alive()) status.textContent = '저장된 로그를 읽지 못했습니다. 실행 로그 조회 권한을 확인하고 다시 시도하세요.'; })
+      .finally(() => { if (alive()) panel.dataset.loading = 'false'; });
+  }
+  loadPersistedExecutionLogs();  </script>
+
+</th:block>
+</body>
+</html>

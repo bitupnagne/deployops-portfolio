@@ -1,0 +1,117 @@
+<!DOCTYPE html>
+<html xmlns:th="http://www.thymeleaf.org">
+<body>
+<th:block th:fragment="content">
+
+  <div class="page-header">
+    <div>
+      <h1 class="page-title">배포 요청 목록</h1>
+      <p class="page-desc">올라온 배포 요청과 진행 상태를 봅니다.</p>
+    </div>
+    <div class="page-actions">
+      <button class="btn btn-primary" data-page="request-create">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+        새 배포 요청
+      </button>
+    </div>
+  </div>
+
+  <div class="section-card">
+    <div class="filter-bar">
+      <select class="form-select" id="filter-status" style="width:180px">
+        <option value="">전체 상태</option>
+        <option th:each="s : ${statusList}"
+                th:value="${s.name()}"
+                th:text="${s.label}"
+                th:selected="${s.name() == filterStatus}">상태</option>
+      </select>
+      <select class="form-select" id="filter-project" style="width:180px">
+        <option value="">전체 프로젝트</option>
+        <option th:each="p : ${projects}"
+                th:value="${p.id}"
+                th:text="${p.name}"
+                th:selected="${p.id == filterProjectId}">프로젝트</option>
+      </select>
+      <label class="sr-only" for="filter-from">시작일</label>
+      <input class="form-input" type="date" id="filter-from" th:value="${filterFrom}" style="width:150px">
+      <label class="sr-only" for="filter-to">종료일</label>
+      <input class="form-input" type="date" id="filter-to" th:value="${filterTo}" style="width:150px">
+      <button class="btn btn-ghost" onclick="loadRequests()">검색</button>
+    </div>
+
+    <div class="table-wrap">
+      <table class="data-table">
+        <thead>
+        <tr>
+          <th scope="col">요청 번호</th>
+          <th scope="col">프로젝트</th>
+          <th scope="col">환경</th>
+          <th scope="col">배포 기준</th>
+          <th scope="col">상태</th>
+          <th scope="col">요청자</th>
+          <th scope="col">요청 시각</th>
+          <th scope="col"></th>
+        </tr>
+        </thead>
+        <tbody>
+          <tr th:if="${requests == null or requests.isEmpty()}">
+            <td colspan="8" style="text-align:center;padding:32px;color:var(--muted)"><div class="table-empty-content">배포 요청이 없습니다.</div></td>
+          </tr>
+          <tr th:each="r : ${requests}"
+              class="tr-link"
+              th:data-request-id="${r.id}"
+              onclick="navigate('request-detail', this.dataset.requestId)">
+            <td class="req-id" th:text="${r.reqNo}">REQ-...</td>
+            <td><strong th:text="${r.project.name}">project</strong></td>
+            <td>
+              <span class="env-badge prod" th:if="${r.environment.name() == 'PROD'}">PROD</span>
+              <span class="env-badge test" th:if="${r.environment.name() == 'TEST'}">TEST</span>
+            </td>
+            <td class="mono" th:text="${r.imageTag ?: r.branch}">branch</td>
+            <td>
+              <span th:class="'status-badge ' + ${r.status.name().toLowerCase().replace('_','-')}"
+                    th:text="${r.status.label}">상태</span>
+            </td>
+            <td th:text="${r.requestedBy?.name ?: '-'}">요청자</td>
+            <td th:text="${#temporals.format(r.createdAt, 'yyyy-MM-dd HH:mm')}">시각</td>
+            <td><button class="btn-ghost sm">상세</button></td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div class="table-footer" th:if="${requests != null}">
+      <span class="table-count">
+        총 <strong th:text="${requests.totalElements}">0</strong>건
+      </span>
+      <div class="pagination" th:if="${requests.totalPages > 1}">
+        <button class="btn btn-ghost sm" th:disabled="${requests.first}"
+                th:data-page-number="${requests.number - 1}" onclick="loadRequestsPage(this)">이전</button>
+        <span th:text="|${requests.number + 1} / ${requests.totalPages}|">1 / 1</span>
+        <button class="btn btn-ghost sm" th:disabled="${requests.last}"
+                th:data-page-number="${requests.number + 1}" onclick="loadRequestsPage(this)">다음</button>
+      </div>
+    </div>
+  </div>
+
+  <script>
+  function loadRequests() {
+    const status = document.getElementById('filter-status').value;
+    const projectId = document.getElementById('filter-project').value;
+    const from = document.getElementById('filter-from').value;
+    const to = document.getElementById('filter-to').value;
+    navigate('requests', null, { status, projectId, from, to, page: 0 });
+  }
+  function loadRequestsPage(button) {
+    const status = document.getElementById('filter-status').value;
+    const projectId = document.getElementById('filter-project').value;
+    const from = document.getElementById('filter-from').value;
+    const to = document.getElementById('filter-to').value;
+    const page = Number(button.dataset.pageNumber);
+    navigate('requests', null, { status, projectId, from, to, page });
+  }
+  </script>
+
+</th:block>
+</body>
+</html>

@@ -1,0 +1,109 @@
+<!DOCTYPE html>
+<html xmlns:th="http://www.thymeleaf.org">
+<body>
+<th:block th:fragment="content">
+
+  <div class="page-header">
+    <div>
+      <h1 class="page-title">MR 승인 대기</h1>
+      <p class="page-desc">내가 승인할 수 있는 프로젝트의 열린 병합 요청(MR)을 모아 봅니다. 여기서 바로 승인하고 병합합니다.</p>
+    </div>
+    <div>
+      <button class="btn btn-ghost" type="button" onclick="loadMyMrs()">새로고침</button>
+    </div>
+  </div>
+
+  <div class="section-card">
+    <div id="mr-approval-list">
+      <p class="form-hint" style="padding:20px 0;text-align:center">불러오는 중…</p>
+    </div>
+  </div>
+
+  <script>
+  (function () {
+    function esc(s) {
+      return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) {
+        return ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c];
+      });
+    }
+
+    window.loadMyMrs = function () {
+      var box = document.getElementById('mr-approval-list');
+      if (!box) return;
+      box.innerHTML = '<p class="form-hint" style="padding:20px 0;text-align:center">불러오는 중…</p>';
+      fetch('/api/v1/gitlab/my-merge-requests', { headers: { Accept: 'application/json' } })
+        .then(function (r) { return r.json(); })
+        .then(function (res) {
+          if (!res.success) { box.innerHTML = '<p class="form-hint" style="padding:20px 0;text-align:center;color:var(--red)">' + esc(res.message || '불러오지 못했습니다.') + '</p>'; return; }
+          var mrs = res.data || [];
+          var warning = res.message
+            ? '<p role="status" style="margin:0 0 12px;padding:10px 12px;border:1px solid var(--warning);border-radius:8px;color:var(--warning)">' + esc(res.message) + '</p>'
+            : '';
+          if (!mrs.length) {
+            if (res.message) {
+              box.innerHTML = warning + '<p class="form-hint" style="padding:12px 0;text-align:center">현재 표시할 MR이 없습니다. 위 안내에서 제외 사유나 조회 상태를 확인해 주세요.</p>';
+              return;
+            }
+            box.innerHTML =
+              '<div class="form-hint" style="padding:24px 0;text-align:center">'
+              + '<p style="margin:0 0 4px;font-weight:700;color:var(--text)">지금 볼 병합 요청이 없습니다.</p>'
+              + '<p style="margin:0">열려 있는 병합 요청이 없거나, 저장소 연결 이력과 다른 과거 MR을 제외했을 수 있습니다.<br>'
+              + '승인 권한은 프로젝트마다 따로 주므로 필요하면 관리자에게 요청하세요.</p>'
+              + '</div>';
+            return;
+          }
+          box.innerHTML = warning + mrs.map(function (mr) {
+            var pid = mr.deployProjectId, iid = mr.iid;
+            var canMerge = mr.canMerge === true;
+            return '' +
+              '<div class="mr-appr-row" style="display:flex;justify-content:space-between;gap:16px;align-items:flex-start;flex-wrap:wrap;padding:14px 0;border-bottom:1px solid var(--border)">' +
+                '<div style="min-width:0;flex:1">' +
+                  '<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:4px">' +
+                    '<span class="badge" style="background:var(--bg-subtle);font-weight:600">' + esc(mr.projectName) + '</span>' +
+                    '<strong>!' + esc(iid) + '</strong>' +
+                    '<span>' + esc(mr.title || '') + '</span>' +
+                  '</div>' +
+                  '<div style="font-size:12px;color:var(--muted)">' +
+                    '<span class="mono">' + esc(mr.sourceBranch || '-') + '</span> → ' +
+                    '<span class="mono">' + esc(mr.targetBranch || '-') + '</span>' +
+                    (mr.authorName || mr.authorUsername ? ' · ' + esc(mr.authorName || mr.authorUsername) : '') +
+                    '<br><span class="mono">검토 SHA: ' + esc(mr.sha || '-') + '</span>' +
+                  '</div>' +
+                '</div>' +
+                '<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">' +
+                  (mr.webUrl ? '<a class="btn btn-ghost" href="' + esc(mr.webUrl) + '" target="_blank" rel="noopener">GitLab</a>' : '') +
+                  '<button class="btn btn-primary" type="button" onclick="mrAction(' + pid + ', ' + iid + ')">변경내용 검토</button>' +
+                '</div>' +
+              '</div>';
+          }).join('');
+        })
+        .catch(function () { box.innerHTML = '<p class="form-hint" style="padding:20px 0;text-align:center;color:var(--red)">네트워크 오류가 발생했습니다.</p>'; });
+    };
+
+    window.mrAction = function (projectId, iid) {
+      var requestedIid = String(iid == null ? '' : iid).trim();
+      if (!/^\d+$/.test(requestedIid)) {
+        showToast('검토할 MR 번호를 확인할 수 없습니다. 목록을 새로고침해 주세요.', 'error');
+        return;
+      }
+      window.__deployOpsPendingMrReview = { projectId: String(projectId), iid: requestedIid };
+      navigate('project-detail', projectId).then(function () {
+        var pending = window.__deployOpsPendingMrReview;
+        if (!pending || pending.projectId !== String(projectId) || pending.iid !== requestedIid) return;
+        var tab = document.querySelector('.tab-btn[data-tab="mrs"]');
+        if (tab) {
+          tab.click();
+        } else {
+          window.__deployOpsPendingMrReview = null;
+          showToast('프로젝트 MR 검토 화면을 열 수 없습니다. 페이지를 새로고침해 주세요.', 'error');
+        }
+      });
+    };
+
+    loadMyMrs();
+  })();
+  </script>
+
+</th:block>
+</body>
+</html>

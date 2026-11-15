@@ -1,0 +1,2 @@
+ALTER TABLE merge_request_evidence
+  MODIFY COLUMN status ENUM('APPROVED','MERGED','REJECTED') NOT NULL;

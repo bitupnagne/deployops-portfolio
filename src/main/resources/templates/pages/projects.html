@@ -1,0 +1,662 @@
+<!DOCTYPE html>
+<html xmlns:th="http://www.thymeleaf.org"
+      xmlns:sec="http://www.thymeleaf.org/extras/spring-security">
+<body>
+<th:block th:fragment="content">
+
+  <div class="page-header">
+    <div>
+      <h1 class="page-title">프로젝트</h1>
+      <p class="page-desc">배포할 프로젝트를 등록하고 설정합니다.</p>
+    </div>
+    <div class="page-actions" sec:authorize="hasRole('SUPER_ADMIN')">
+      <button class="btn btn-primary" onclick="openProjectModal()">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+        프로젝트 추가
+      </button>
+    </div>
+  </div>
+
+  <div class="notice-box" th:if="${currentUser == null or currentUser.role != 'SUPER_ADMIN'}">
+    프로젝트 등록과 배포 설정 변경은 최고 관리자에게 요청해 주세요. 상세 화면에서 설정과 부여된 프로젝트 권한에 따른 작업을 확인할 수 있습니다.
+  </div>
+
+  <div class="section-card">
+    <div class="table-wrap">
+      <table class="data-table">
+        <thead>
+          <tr>
+            <th scope="col">프로젝트명</th>
+            <th scope="col">설명</th>
+            <th scope="col">파이프라인</th>
+            <th scope="col">GitLab URL</th>
+            <th scope="col">상태</th>
+            <th scope="col" sec:authorize="hasRole('SUPER_ADMIN')">관리</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr th:if="${#lists.isEmpty(projects)}">
+            <td colspan="6" style="text-align:center;padding:32px;color:var(--muted)"><div class="table-empty-content">프로젝트가 없습니다.</div></td>
+          </tr>
+          <tr th:each="p : ${projects}" class="tr-link" th:data-project-id="${p.id}"
+              onclick="navigate('project-detail', this.dataset.projectId)">
+            <td><strong th:text="${p.name}">project</strong></td>
+            <td th:text="${p.description ?: '-'}">설명</td>
+            <td th:text="${p.pipelineType?.name() ?: '-'}">파이프라인</td>
+            <td class="mono" style="font-size:0.8rem" th:text="${#strings.abbreviate(p.gitlabRepoUrl ?: '-', 40)}">URL</td>
+            <td>
+              <span class="status-badge completed" th:if="${p.active}">활성</span>
+              <span class="status-badge failed" th:unless="${p.active}">비활성</span>
+            </td>
+            <td sec:authorize="hasRole('SUPER_ADMIN')" onclick="event.stopPropagation()">
+              <button class="btn-ghost sm edit-project-btn"
+                      th:data-id="${p.id}"
+                      onclick="navigate('project-detail', this.dataset.id)">수정</button>
+              <!-- 실제 동작은 비활성화(soft)다. 배포 이력이 남아야 해서 지우지 않는다 —
+                   버튼에는 실제로 일어나는 일을 적는다. -->
+              <button class="btn-ghost sm" style="color:var(--danger)" sec:authorize="hasRole('SUPER_ADMIN')"
+                      th:data-id="${p.id}" th:data-name="${p.name}"
+                      onclick="deleteProject(this)">비활성화</button>
+            </td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <!-- 프로젝트 추가 위자드 — ① GitLab 선택 → ② 기본 정보 → ③ 배포 대상 → ④ 확인.
+
+       3단계가 나중에 붙었다. 전에는 5가지만 받고 끝냈는데, 그러면 만들어진 프로젝트는
+       배포할 수 없는 상태였다 — 이미지 저장소와 서버 그룹이 비어 있어서다. 사용자는
+       그 사실을 상세 화면의 입력 칸 46개 앞에서 스스로 알아내야 했고, 승인 정책은
+       아예 묻지 않으니 새 프로젝트가 기본적으로 <b>무승인 배포</b>가 됐다.
+
+       그래서 배포를 막는 것과 조용히 위험한 것만 여기서 받는다. 나머지 상세 설정
+       (빌드 명령·Dockerfile 경로·Nexus 저장소 등)은 여전히 상세 페이지의 몫이다. -->
+  <div id="project-modal" class="modal-overlay" style="display:none"
+       th:if="${currentUser != null and currentUser.role == 'SUPER_ADMIN'}">
+    <div class="modal" style="width:640px" role="dialog" aria-modal="true" aria-labelledby="project-modal-title">
+      <div class="modal-header">
+        <h3 class="modal-title" id="project-modal-title">프로젝트 추가</h3>
+        <button class="modal-close" onclick="closeProjectModal()" aria-label="닫기">×</button>
+      </div>
+      <div class="modal-body" style="overflow-y:auto;flex:1">
+        <div class="wiz-steps">
+          <span class="wiz-step" data-step="1"><span class="n">1</span>GitLab 프로젝트</span>
+          <span class="wiz-sep"></span>
+          <span class="wiz-step" data-step="2"><span class="n">2</span>기본 정보</span>
+          <span class="wiz-sep"></span>
+          <span class="wiz-step" data-step="3"><span class="n">3</span>배포 대상</span>
+          <span class="wiz-sep"></span>
+          <span class="wiz-step" data-step="4"><span class="n">4</span>확인</span>
+        </div>
+
+        <div id="wiz-pane-1">
+          <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px">
+            <label class="form-label" style="margin:0;font-weight:600">배포할 GitLab 프로젝트를 선택하세요</label>
+            <button class="btn btn-ghost" style="font-size:12px;padding:4px 10px" type="button" onclick="loadGitlabProjects()">새로고침</button>
+          </div>
+          <input class="form-input" type="text" id="gitlab-search-input"
+                 placeholder="프로젝트명 검색..."
+                 oninput="filterGitlabProjects()"
+                 style="margin-bottom:8px">
+          <div id="gitlab-project-list"
+               style="height:280px;overflow-y:auto;border:1px solid var(--border);border-radius:6px;background:var(--bg-secondary)">
+            <div style="padding:20px;text-align:center;color:var(--muted)">불러오는 중...</div>
+          </div>
+          <p class="form-hint" style="margin-top:8px">한 번 더 누르면 선택이 해제되고, 다른 항목을 누르면 선택이 옮겨갑니다.</p>
+        </div>
+
+        <div id="wiz-pane-2" style="display:none">
+          <div class="form-grid">
+            <div class="form-group full">
+              <label class="form-label" for="proj-modal-name">프로젝트명<span class="req">*</span></label>
+              <input class="form-input" id="proj-modal-name" placeholder="payment-api">
+              <p class="form-hint">GitLab 저장소 이름으로 채워 둡니다. 배포 시스템에서 부를 이름이라 바꿔도 됩니다.</p>
+            </div>
+            <div class="form-group full">
+              <label class="form-label" for="proj-modal-desc">설명</label>
+              <input class="form-input" id="proj-modal-desc" placeholder="예: 결제 API 서버">
+            </div>
+            <div class="form-group full">
+              <label class="form-label" for="proj-modal-pipeline">파이프라인</label>
+              <select class="form-select" id="proj-modal-pipeline">
+                <option value="DOCKER">Docker — 컨테이너 이미지로 배포</option>
+                <option value="JAR">JAR — 실행 파일(jar)로 배포</option>
+                <option value="STATIC">Static — 정적 파일로 배포</option>
+              </select>
+            </div>
+            <div class="form-group">
+              <label class="form-label" for="wiz-build-config-mode">빌드 설정</label>
+              <select class="form-select" id="wiz-build-config-mode">
+                <option value="IMPORT">기존 Dockerfile/CI 사용</option>
+                <option value="AUTO" selected>소스 감지 및 자동 생성</option>
+                <option value="MANUAL">직접 설정</option>
+              </select>
+            </div>
+            <div class="form-group">
+              <label class="form-label" for="wiz-build-tool">빌드 도구</label>
+              <select class="form-select" id="wiz-build-tool">
+                <option value="AUTO" selected>자동 인식</option>
+                <option value="MAVEN">Maven</option>
+                <option value="GRADLE">Gradle</option>
+                <option value="NPM">NPM</option>
+                <option value="C">C (gcc)</option>
+                <option value="STATIC">Static</option>
+              </select>
+            </div>
+          </div>
+        </div>
+
+        <div id="wiz-pane-3" style="display:none">
+          <p class="form-hint" style="margin:0 0 12px">
+            아는 만큼 <b>미리 채워 뒀습니다.</b> 등록 후 프로젝트 상세에서 CI와 실행환경을 확인해 주세요 —
+            바꿔야 할 이유가 없다면 다음으로 넘어가세요.
+          </p>
+          <div class="form-grid">
+            <div class="form-group full">
+              <label class="form-label" for="wiz-image-repo">이미지 저장소</label>
+              <div class="pick-row">
+                <input class="form-input mono" id="wiz-image-repo"
+                       placeholder="nexus.example.com:18443/payment/payment-api">
+                <button class="btn btn-ghost" type="button" onclick="wizPickImage()">Nexus 에서 찾기</button>
+              </div>
+              <p class="form-hint" id="wiz-image-hint">배포할 때 어느 이미지를 내려받을지 정합니다.</p>
+            </div>
+            <div class="form-group">
+              <label class="form-label" for="wiz-source-entry-path">C 소스 진입 파일</label>
+              <input class="form-input mono" id="wiz-source-entry-path" placeholder="main.c">
+            </div>
+            <div class="form-group">
+              <label class="form-label" for="wiz-compiler-options">gcc 컴파일 옵션</label>
+              <input class="form-input mono" id="wiz-compiler-options" placeholder="-O2 -Wall -pthread">
+            </div>
+            <div class="form-group full">
+              <label class="form-label" for="wiz-runtime-base-image">런타임 베이스 이미지</label>
+              <input class="form-input mono" id="wiz-runtime-base-image" placeholder="rockylinux:8.10">
+            </div>
+
+            <div class="form-group full">
+              <label class="toggle-field"><input type="checkbox" id="wiz-container-privileged" hidden><span class="toggle-track"><span class="toggle-thumb"></span></span><span class="toggle-text">privileged</span></label>
+              <label class="toggle-field" style="margin-top:8px"><input type="checkbox" id="wiz-container-read-only" hidden><span class="toggle-track"><span class="toggle-thumb"></span></span><span class="toggle-text">read-only rootfs</span></label>
+              <p class="form-hint">프로젝트 기본 컨테이너에 적용합니다. 실행 계정과 로그·임시 공간은 등록 후 상세에서 설정합니다.</p>
+            </div>
+
+            <div class="form-group full">
+              <label class="form-label">배포 대상 서버 그룹</label>
+              <div id="wiz-groups" class="wiz-pick">
+                <p class="wiz-pick-empty" th:if="${#lists.isEmpty(serverGroups)}">
+                  등록된 서버 그룹이 없습니다. 먼저 서버 그룹을 만들어 주세요.
+                </p>
+                <label class="wiz-pick-row" th:each="g : ${serverGroups}"
+                       th:attr="data-env=${g.environment}">
+                  <input type="checkbox" class="wiz-group" th:value="${g.id}">
+                  <span class="wiz-pick-name" th:text="${g.name}">그룹</span>
+                  <span class="wiz-pick-rec" hidden>추천</span>
+                  <span class="wiz-pick-env" th:text="${g.environment}">PROD</span>
+                </label>
+              </div>
+              <p class="form-hint">어느 서버로 나갈지 정합니다. 고르지 않으면 대상 서버가 0대라 배포할 곳이 없습니다.</p>
+            </div>
+
+            <div class="form-group full">
+              <label class="form-label" for="wiz-policy">승인 정책</label>
+              <select class="form-select" id="wiz-policy" onchange="wizPolicyHint()"
+                      th:disabled="${currentUser == null or currentUser.role != 'SUPER_ADMIN'}">
+                <option value="">지정 안 함 — 전역 운영 승인 대기만 적용될 수 있음</option>
+                <option th:each="p : ${policies}" th:if="${currentUser != null and currentUser.role == 'SUPER_ADMIN'}"
+                        th:value="${p.id}" th:text="${p.name}" th:disabled="${#lists.isEmpty(p.steps)}">정책</option>
+              </select>
+              <p class="form-hint" id="wiz-policy-hint"></p>
+            </div>
+          </div>
+        </div>
+
+        <div id="wiz-pane-4" style="display:none">
+          <p class="form-hint" style="margin:0 0 12px">아래 내용으로 등록합니다. 회색 값은 GitLab에서 자동으로 가져온 값입니다.</p>
+          <div class="form-grid">
+            <div class="form-group full">
+              <label class="form-label" for="wiz-sum-name">프로젝트명</label>
+              <input class="form-input is-readonly" id="wiz-sum-name" readonly>
+            </div>
+            <div class="form-group full">
+              <label class="form-label" for="wiz-sum-gitlab-name">GitLab 프로젝트</label>
+              <input class="form-input is-readonly" id="wiz-sum-gitlab-name" readonly>
+            </div>
+            <div class="form-group full">
+              <label class="form-label" for="wiz-sum-url">저장소 주소</label>
+              <input class="form-input mono is-readonly" id="wiz-sum-url" readonly>
+            </div>
+            <div class="form-group">
+              <label class="form-label" for="wiz-sum-gitlab-id">GitLab 프로젝트 ID</label>
+              <input class="form-input mono is-readonly" id="wiz-sum-gitlab-id" readonly>
+            </div>
+            <div class="form-group">
+              <label class="form-label" for="wiz-sum-branch">기본 브랜치</label>
+              <input class="form-input mono is-readonly" id="wiz-sum-branch" readonly>
+            </div>
+            <div class="form-group">
+              <label class="form-label" for="wiz-sum-pipeline">파이프라인</label>
+              <input class="form-input is-readonly" id="wiz-sum-pipeline" readonly>
+            </div>
+            <div class="form-group">
+              <label class="form-label" for="wiz-sum-desc">설명</label>
+              <input class="form-input is-readonly" id="wiz-sum-desc" readonly>
+            </div>
+            <div class="form-group full">
+              <label class="form-label" for="wiz-sum-image">이미지 저장소</label>
+              <input class="form-input mono is-readonly" id="wiz-sum-image" readonly>
+            </div>
+            <div class="form-group">
+              <label class="form-label" for="wiz-sum-groups">배포 대상</label>
+              <input class="form-input is-readonly" id="wiz-sum-groups" readonly>
+            </div>
+            <div class="form-group">
+              <label class="form-label" for="wiz-sum-policy">승인 정책</label>
+              <input class="form-input is-readonly" id="wiz-sum-policy" readonly>
+            </div>
+          </div>
+          <div id="wiz-warn" class="wiz-warn" style="display:none"></div>
+          <p class="form-hint" style="margin-top:12px">빌드 명령·Dockerfile 경로 같은 나머지 설정은 등록 후 프로젝트 상세에서 이어서 합니다.</p>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-ghost" onclick="closeProjectModal()">취소</button>
+        <button class="btn btn-ghost" id="wiz-prev" style="display:none" onclick="wizGo(-1)">이전</button>
+        <button class="btn btn-primary" id="wiz-next" onclick="wizGo(1)" disabled>다음</button>
+      </div>
+    </div>
+  </div>
+
+  <script>
+  var _gitlabProjects = [];
+  var _gitlabProjectListState = 'loading';
+  var _selGitlab = null;      // 1단계에서 고른 GitLab 프로젝트 (없으면 미선택)
+  var _wizStep = 1;
+
+  function openProjectModal() {
+    _selGitlab = null;
+    _wizStep = 1;
+    document.getElementById('proj-modal-name').value = '';
+    document.getElementById('proj-modal-desc').value = '';
+    document.getElementById('proj-modal-pipeline').value = 'DOCKER';
+    document.getElementById('wiz-build-config-mode').value = 'AUTO';
+    document.getElementById('wiz-build-tool').value = 'AUTO';
+    document.getElementById('wiz-source-entry-path').value = '';
+    document.getElementById('wiz-compiler-options').value = '';
+    document.getElementById('wiz-runtime-base-image').value = '';
+    document.getElementById('gitlab-search-input').value = '';
+    document.getElementById('wiz-image-repo').value = '';
+    document.getElementById('wiz-policy').value = '';
+    document.getElementById('wiz-container-privileged').checked = false;
+    document.getElementById('wiz-container-read-only').checked = false;
+    document.querySelectorAll('.wiz-group').forEach(c => { c.checked = false; });
+    document.querySelectorAll('.wiz-pick-rec').forEach(t => { t.hidden = true; });
+    _wizFilled = false;
+    const _ih = document.getElementById('wiz-image-hint');
+    if (_ih) { _ih.textContent = '배포할 때 어느 이미지를 내려받을지 정합니다.'; _ih.classList.remove('is-rec'); }
+    wizPolicyHint();
+    renderWizStep();
+    document.getElementById('project-modal').style.display = 'flex';
+    toggleWizardCFields();
+    loadGitlabProjects();
+  }
+
+  function toggleWizardCFields() {
+    const c = document.getElementById('wiz-build-tool')?.value === 'C';
+    ['wiz-source-entry-path', 'wiz-compiler-options', 'wiz-runtime-base-image'].forEach(function (id) {
+      const el = document.getElementById(id);
+      if (el) el.closest('.form-group').style.display = c ? '' : 'none';
+    });
+    if (c) {
+      const entry = document.getElementById('wiz-source-entry-path');
+      const image = document.getElementById('wiz-runtime-base-image');
+      if (entry && !entry.value) entry.value = 'main.c';
+      if (image && !image.value) image.value = 'rockylinux:8.10';
+    }
+  }
+
+  function renderWizStep() {
+    for (let s = 1; s <= 4; s++) {
+      document.getElementById('wiz-pane-' + s).style.display = (s === _wizStep) ? '' : 'none';
+    }
+    document.querySelectorAll('#project-modal .wiz-step').forEach(el => {
+      const s = Number(el.dataset.step);
+      el.classList.toggle('active', s === _wizStep);
+      el.classList.toggle('done', s < _wizStep);
+    });
+    document.getElementById('wiz-prev').style.display = (_wizStep > 1) ? '' : 'none';
+    const next = document.getElementById('wiz-next');
+    next.textContent = (_wizStep === 4) ? '등록' : '다음';
+    next.disabled = (_wizStep === 1 && !_selGitlab);
+  }
+
+  function wizGo(dir) {
+    if (dir > 0) {
+      if (_wizStep === 1) {
+        if (!_selGitlab) { showToast('GitLab 프로젝트를 선택하세요.', 'error'); return; }
+        // 프로젝트명이 비어 있으면 저장소 이름으로 채워 준다 — 수정 가능
+        if (!document.getElementById('proj-modal-name').value) {
+          const parts = (_selGitlab.nameWithNamespace || '').split(' / ');
+          document.getElementById('proj-modal-name').value = parts[parts.length - 1] || '';
+        }
+      }
+      if (_wizStep === 2) {
+        if (!document.getElementById('proj-modal-name').value.trim()) {
+          showToast('프로젝트명은 필수입니다.', 'error');
+          return;
+        }
+      }
+      if (_wizStep === 2) { wizFillSuggestions(); }
+      // 3단계는 막지 않는다 — 지금 모를 수도 있는 값이라 강제하면 등록 자체를 못 한다.
+      // 대신 4단계에서 무엇이 비었는지 분명히 보여 준다.
+      if (_wizStep === 3) { fillWizSummary(); }
+      if (_wizStep === 4) { submitProjectModal(); return; }
+      _wizStep++;
+    } else {
+      _wizStep = Math.max(1, _wizStep - 1);
+    }
+    renderWizStep();
+  }
+
+  function fillWizSummary() {
+    const pipelineLabel = document.getElementById('proj-modal-pipeline');
+    document.getElementById('wiz-sum-name').value = document.getElementById('proj-modal-name').value.trim();
+    document.getElementById('wiz-sum-gitlab-name').value = _selGitlab.nameWithNamespace || '';
+    document.getElementById('wiz-sum-url').value = _selGitlab.httpUrlToRepo || '';
+    document.getElementById('wiz-sum-gitlab-id').value = _selGitlab.id;
+    document.getElementById('wiz-sum-branch').value = _selGitlab.defaultBranch || 'main';
+    document.getElementById('wiz-sum-pipeline').value = pipelineLabel.options[pipelineLabel.selectedIndex].text;
+    document.getElementById('wiz-sum-desc').value = document.getElementById('proj-modal-desc').value.trim() || '-';
+
+    const image = document.getElementById('wiz-image-repo').value.trim();
+    const groups = wizPickedGroups();
+    const policySel = document.getElementById('wiz-policy');
+    const policyName = policySel.value ? policySel.options[policySel.selectedIndex].text : '';
+
+    document.getElementById('wiz-sum-image').value = image || '(비어 있음)';
+    document.getElementById('wiz-sum-groups').value = groups.length
+      ? groups.map(g => g.name).join(', ') : '(비어 있음)';
+    document.getElementById('wiz-sum-policy').value = policyName || '지정 안 함';
+
+    // 비워 둔 채로 등록해도 되지만, 그 결과가 무엇인지는 알고 넘어가게 한다.
+    const warn = [];
+    if (!image) warn.push('<b>이미지 저장소</b>가 비어 있어 아직 배포할 수 없습니다.');
+    if (!groups.length) warn.push('<b>배포 대상</b>이 없어 나갈 서버가 없습니다.');
+    if (!policySel.value) warn.push('<b>승인 정책</b>이 지정되지 않았습니다. PROD 승인 여부는 시스템 실행 정책 설정을 따릅니다.');
+    const box = document.getElementById('wiz-warn');
+    if (warn.length) {
+      box.style.display = '';
+      box.innerHTML = '<p>등록은 됩니다. 다만 지금 상태로는:</p><ul>'
+        + warn.map(w => '<li>' + w + '</li>').join('')
+        + '</ul><p class="wiz-warn-tail">등록 후 프로젝트 상세 맨 위에서 이 목록을 다시 볼 수 있습니다.</p>';
+    } else {
+      box.style.display = 'none';
+    }
+  }
+
+  /* ── 3단계를 추천으로 미리 채운다 ──
+
+     이미지 저장소 · 서버 그룹 · 승인 정책은 인프라를 아는 사람만 채울 수 있어서
+     개발자가 프로젝트를 직접 만들려 하면 여기서 멈춘다. 그런데 답은 이미 우리가 알고 있다.
+     채워 놓고 "추천" 이라고 표시한다 — 고르라고 하지 않고 바꿀 수 있게만 둔다.
+
+     사람이 이미 손댄 값은 건드리지 않는다. */
+  var _wizFilled = false;
+
+  function wizFillSuggestions() {
+    if (_wizFilled || !_selGitlab) return;
+    _wizFilled = true;
+
+    // ① 이미지 저장소 = 레지스트리 주소 + GitLab 저장소 경로
+    //    경로를 그대로 옮기면 사람이 규칙을 외울 필요가 없고, 저장소를 보면 어느 프로젝트인지 안다.
+    var imageEl = document.getElementById('wiz-image-repo');
+    var hint = document.getElementById('wiz-image-hint');
+    if (imageEl && !imageEl.value.trim()) {
+      fetch('/api/v1/nexus/repositories?format=docker')
+        .then(function (r) { return r.json(); })
+        .then(function (res) {
+          var reg = res.success && res.data ? res.data.registry : '';
+          var path = (_selGitlab.pathWithNamespace || '').trim();
+          if (!reg || !path || imageEl.value.trim()) return;
+          imageEl.value = reg + '/' + path;
+          hint.innerHTML = '<b>추천</b> 레지스트리 주소와 GitLab 저장소 경로로 만들었습니다. '
+            + '그대로 두셔도 됩니다.';
+          hint.classList.add('is-rec');
+        })
+        .catch(function () { /* 못 채우면 그냥 빈칸으로 둔다 */ });
+    }
+
+    // ② 서버 그룹 — 환경마다 그룹이 <하나뿐일 때만> 자동으로 고른다.
+    //    여럿이면 어느 것이 맞는지 우리도 모른다. 모르면서 고르면 엉뚱한 데로 나간다.
+    var byEnv = {};
+    document.querySelectorAll('#wiz-groups .wiz-pick-row').forEach(function (row) {
+      var env = row.dataset.env || '-';
+      (byEnv[env] = byEnv[env] || []).push(row);
+    });
+    Object.keys(byEnv).forEach(function (env) {
+      if (byEnv[env].length !== 1) return;
+      var row = byEnv[env][0];
+      row.querySelector('.wiz-group').checked = true;
+      var tag = row.querySelector('.wiz-pick-rec');
+      if (tag) tag.hidden = false;
+    });
+
+    // ③ 사용할 수 있는 승인 정책이 하나뿐이면 그것을 고른다.
+    var pol = document.getElementById('wiz-policy');
+    if (pol && !pol.disabled && !pol.value) {
+      var available = Array.from(pol.options).filter(function (option) {
+        return option.value && !option.disabled;
+      });
+      if (available.length === 1) pol.value = available[0].value;
+    }
+    wizPolicyHint();
+  }
+
+  /** Nexus 에서 이미지 저장소 고르기 — 이미지 경로 기본값으로 프로젝트명을 준다. */
+  function wizPickImage() {
+    var name = (document.getElementById('proj-modal-name').value || '').trim();
+    nxOpen('wiz-image-repo', 'docker', 'image', name);
+  }
+
+  /** 3단계에서 고른 서버 그룹. */
+  function wizPickedGroups() {
+    return [...document.querySelectorAll('.wiz-group:checked')].map(c => ({
+      id: Number(c.value),
+      name: c.parentElement.querySelector('.wiz-pick-name').textContent
+    }));
+  }
+
+  /** 정책을 지정 안 함으로 두면 무슨 일이 생기는지 그 자리에서 말해 준다. */
+  function wizPolicyHint() {
+    const sel = document.getElementById('wiz-policy');
+    const hint = document.getElementById('wiz-policy-hint');
+    if (!sel || !hint) return;
+    if (window.DeploySelect) window.DeploySelect.sync(sel);
+    if (sel.value) {
+      hint.textContent = '배포 요청이 이 정책을 따라 승인을 받습니다.';
+      hint.classList.remove('is-warn');
+    } else {
+      hint.textContent = sel.disabled
+        ? '프로젝트 승인 정책은 최고 관리자가 등록 후 지정합니다. 전역 실행 정책만으로는 지정 승인자를 제한하지 못합니다.'
+        : '지정하지 않으면 전역 실행 정책에 따라 승인 대기할 수 있지만, 지정 승인자와 자기 승인 금지는 적용되지 않습니다.';
+      hint.classList.add('is-warn');
+    }
+  }
+
+  function loadGitlabProjects() {
+    _gitlabProjectListState = 'loading';
+    const listEl = document.getElementById('gitlab-project-list');
+    listEl.innerHTML = '<div style="padding:20px;text-align:center;color:var(--muted)">불러오는 중...</div>';
+    document.getElementById('gitlab-search-input').value = '';
+
+    fetch('/api/v1/gitlab/projects')
+      .then(r => r.json())
+      .then(data => {
+        if (data.success && Array.isArray(data.data) && data.data.length > 0) {
+          _gitlabProjectListState = 'ready';
+          _gitlabProjects = data.data;
+          renderGitlabList(_gitlabProjects);
+        } else if (data.errorCode === 'NO_TOKEN' || data.error === 'NO_TOKEN') {
+          _gitlabProjectListState = 'no-token';
+          _gitlabProjects = [];
+          listEl.innerHTML = `
+            <div style="padding:24px;text-align:center">
+              <div style="color:var(--danger);margin-bottom:10px;font-size:13px">GitLab 토큰이 등록되지 않았습니다.</div>
+              <button class="btn btn-primary" style="font-size:13px" onclick="closeProjectModal();navigate('profile')">
+                프로필에서 GitLab 연동하기
+              </button>
+            </div>`;
+        } else {
+          _gitlabProjectListState = 'error';
+          _gitlabProjects = [];
+          listEl.innerHTML = `<div style="padding:20px;text-align:center;color:var(--danger);font-size:13px">${escH(data.message || '불러오기 실패')}</div>`;
+        }
+      })
+      .catch(() => {
+        _gitlabProjectListState = 'error';
+        _gitlabProjects = [];
+        listEl.innerHTML = '<div style="padding:20px;text-align:center;color:var(--danger);font-size:13px">네트워크 오류가 발생했습니다.</div>';
+      });
+  }
+
+  function filterGitlabProjects() {
+    if (_gitlabProjectListState !== 'ready') return;
+    const q = document.getElementById('gitlab-search-input').value.toLowerCase();
+    const filtered = q ? _gitlabProjects.filter(p =>
+      (p.nameWithNamespace || '').toLowerCase().includes(q) ||
+      (p.httpUrlToRepo || '').toLowerCase().includes(q)
+    ) : _gitlabProjects;
+    renderGitlabList(filtered);
+  }
+
+  function renderGitlabList(list) {
+    const listEl = document.getElementById('gitlab-project-list');
+    if (!list || list.length === 0) {
+      listEl.innerHTML = '<div style="padding:20px;text-align:center;color:var(--muted);font-size:13px">검색 결과가 없습니다.</div>';
+      return;
+    }
+    // 화면에 뿌린 목록을 그대로 들고 있다가, 클릭 시 "몇 번째"만 넘긴다.
+    //   전에는 값을 onclick 속성에 문자열로 박았는데, 저장소 URL·프로젝트명에 들어 있는
+    //   따옴표가 onclick="..." 속성을 중간에서 끊어 클릭이 아예 동작하지 않았다.
+    //   인덱스만 넘기면 속성에 사용자 데이터가 들어가지 않아 그런 일이 생길 수 없다.
+    _renderedGitlab = list;
+    listEl.innerHTML = list.map((p, idx) => {
+      const isSelected = _selGitlab && String(p.id) === String(_selGitlab.id);
+      return `<div class="gl-item${isSelected ? ' selected' : ''}" onclick="selectGitlabByIndex(${idx})">
+        <div style="font-size:13px;font-weight:600">${escH(p.nameWithNamespace)}</div>
+        <div style="font-size:11px;color:var(--muted);margin-top:2px;display:flex;justify-content:space-between;gap:8px">
+          <span class="mono" style="word-break:break-all;flex:1">${escH(p.httpUrlToRepo)}</span>
+          <span style="white-space:nowrap">브랜치 ${escH(p.defaultBranch || 'main')}</span>
+        </div>
+        <svg class="gl-check" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" aria-hidden="true"><polyline points="20 6 9 17 4 12"/></svg>
+      </div>`;
+    }).join('');
+  }
+
+  var _renderedGitlab = [];
+
+  /** 라디오 버튼 동작: 다른 항목을 누르면 선택이 옮겨가고, 같은 항목을 다시 누르면 해제된다. */
+  function selectGitlabByIndex(idx) {
+    const p = _renderedGitlab[idx];
+    if (!p) return;
+    _selGitlab = (_selGitlab && String(_selGitlab.id) === String(p.id)) ? null : p;
+    filterGitlabProjects();          // 현재 검색 상태를 유지한 채 하이라이트만 다시 그린다
+    renderWizStep();                 // 다음 버튼 활성/비활성
+  }
+
+  function escH(str) {
+    return String(str || '')
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/'/g, '&#39;')
+      .replace(/"/g, '&quot;');
+  }
+
+  function closeProjectModal() {
+    document.getElementById('project-modal').style.display = 'none';
+  }
+
+  (function initProjectWizard() {
+    const tool = document.getElementById('wiz-build-tool');
+    if (tool) tool.addEventListener('change', toggleWizardCFields);
+    toggleWizardCFields();
+  })();
+
+  function deleteProject(btn) {
+    const id = btn.dataset.id;
+    const name = btn.dataset.name;
+    openConfirm('프로젝트 비활성화', `"${name}" 프로젝트를 비활성화하시겠습니까?\n기존 배포 이력은 보존됩니다.`, () => {
+      const csrfToken = document.querySelector('meta[name="_csrf"]').content;
+      const csrfHeader = document.querySelector('meta[name="_csrf_header"]').content;
+      fetch(`/api/v1/projects/${id}`, {
+        method: 'DELETE',
+        headers: { [csrfHeader]: csrfToken }
+      })
+        .then(r => r.json())
+        .then(data => {
+          if (data.success) {
+            showToast(data.message, 'success');
+            navigate('projects');
+          } else {
+            showToast(data.message || '삭제 실패', 'error');
+          }
+        })
+        .catch(() => showToast('네트워크 오류', 'error'));
+    });
+  }
+
+  function submitProjectModal() {
+    if (!_selGitlab) { showToast('GitLab 프로젝트를 선택하세요.', 'error'); return; }
+    const name = document.getElementById('proj-modal-name').value.trim();
+    if (!name) { showToast('프로젝트명은 필수입니다.', 'error'); return; }
+
+    const body = {
+      name: name,
+      description: document.getElementById('proj-modal-desc').value.trim() || null,
+      gitlabRepoUrl: _selGitlab.httpUrlToRepo || null,
+      gitlabProjectId: _selGitlab.id != null ? Number(_selGitlab.id) : null,
+      defaultBranch: _selGitlab.defaultBranch || 'main',
+      pipelineType: document.getElementById('proj-modal-pipeline').value,
+      buildConfigMode: document.getElementById('wiz-build-config-mode').value,
+      buildTool: document.getElementById('wiz-build-tool').value === 'AUTO' ? null : document.getElementById('wiz-build-tool').value,
+      sourceEntryPath: document.getElementById('wiz-source-entry-path').value.trim() || null,
+      compilerOptions: document.getElementById('wiz-compiler-options').value.trim() || null,
+      runtimeBaseImage: document.getElementById('wiz-runtime-base-image').value.trim() || null,
+      imageRepository: document.getElementById('wiz-image-repo').value.trim() || null,
+      containerPrivileged: document.getElementById('wiz-container-privileged').checked,
+      containerReadOnlyRootFs: document.getElementById('wiz-container-read-only').checked,
+      serverGroupIds: wizPickedGroups().map(g => g.id),
+      approvalPolicyId: document.getElementById('wiz-policy').value
+        ? Number(document.getElementById('wiz-policy').value) : null,
+      active: true
+    };
+
+    const csrfToken = document.querySelector('meta[name="_csrf"]').content;
+    const csrfHeader = document.querySelector('meta[name="_csrf_header"]').content;
+
+    fetch('/api/v1/projects', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', [csrfHeader]: csrfToken },
+      body: JSON.stringify(body)
+    })
+      .then(r => r.json())
+      .then(data => {
+        if (data.success) {
+          showToast(data.message, 'success');
+          closeProjectModal();
+          // 등록 직후 상세로 보내 나머지 설정(빌드·헬스체크·서버 매핑)을 이어서 하게 한다
+          if (data.data && data.data.id) navigate('project-detail', data.data.id);
+          else navigate('projects');
+        } else {
+          showToast(data.message || '오류가 발생했습니다.', 'error');
+        }
+      })
+      .catch(() => showToast('네트워크 오류가 발생했습니다.', 'error'));
+  }
+  </script>
+
+</th:block>
+</body>
+</html>

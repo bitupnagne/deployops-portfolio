@@ -1,0 +1,189 @@
+<!DOCTYPE html>
+<html xmlns:th="http://www.thymeleaf.org">
+<body>
+<th:block th:fragment="content">
+
+  <div class="page-header">
+    <div>
+      <h1 class="page-title">팀 관리</h1>
+      <p class="page-desc">배포시스템 사용자 팀과 팀장을 관리합니다.</p>
+    </div>
+    <div class="page-actions">
+      <button class="btn btn-primary" onclick="openTeamModal()">팀 추가</button>
+    </div>
+  </div>
+
+  <div th:if="${#lists.isEmpty(teams)}" class="section-card" style="padding:40px;text-align:center;color:var(--muted)">
+    등록된 팀이 없습니다.
+  </div>
+
+  <div th:each="t : ${teams}" class="section-card" style="margin-bottom:16px">
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;gap:12px;flex-wrap:wrap">
+      <div style="display:flex;align-items:center;gap:12px">
+        <h3 class="section-title" style="margin:0" th:text="${t.name}">팀명</h3>
+        <span style="font-size:12px;color:var(--muted)" th:text="${t.description ?: ''}"></span>
+      </div>
+      <div style="display:flex;align-items:center;gap:16px">
+        <span style="font-size:12px;color:var(--text-secondary)">
+          팀장 <strong th:text="${t.leader?.name ?: '미지정'}">-</strong>
+        </span>
+        <span style="font-size:12px;color:var(--text-secondary)">
+          멤버 <strong th:text="${#lists.size(t.members)}">0</strong>명
+        </span>
+        <button class="btn-ghost sm edit-team-btn"
+                th:data-id="${t.id}"
+                th:data-name="${t.name}"
+                th:data-desc="${t.description ?: ''}"
+                th:data-leaderid="${t.leader?.id ?: ''}"
+                th:data-memberids="${#strings.listJoin(t.members.![id], ',')}"
+                data-ui-edit-link data-ui-delete-target="#team-modal" onclick="openTeamModalFromBtn(this)">수정</button>
+        <button class="btn-ghost sm" style="color:var(--danger)"
+                th:data-id="${t.id}" th:data-name="${t.name}"
+                data-ui-delete-source hidden onclick="deleteTeam(this)">삭제</button>
+      </div>
+    </div>
+
+    <div class="table-wrap">
+      <table class="data-table">
+        <thead>
+        <tr><th scope="col">이름</th><th scope="col">아이디</th><th scope="col">역할</th><th scope="col">상태</th></tr>
+        </thead>
+        <tbody>
+        <tr th:if="${#lists.isEmpty(t.members)}">
+          <td colspan="4" style="text-align:center;padding:20px;color:var(--muted)"><div class="table-empty-content">
+            아직 팀원이 없습니다. 팀 <b>수정</b>에서 사용자를 넣어 주세요.
+          </div></td>
+        </tr>
+        <tr th:each="m : ${t.members}">
+          <td>
+            <strong th:text="${m.name}">이름</strong>
+            <span th:if="${t.leader != null and t.leader.id == m.id}"
+                  style="font-size:11px;background:var(--primary);color:#fff;padding:1px 6px;border-radius:4px;margin-left:4px">팀장</span>
+          </td>
+          <td class="mono" th:text="${m.loginId}">loginId</td>
+          <td>
+            <span th:class="'role-badge ' + ${m.role.name().toLowerCase().replace('_','-')}"
+                  th:text="${m.role.label}">역할</span>
+          </td>
+          <td>
+            <span class="status-badge completed" th:if="${m.active}">활성</span>
+            <span class="status-badge failed" th:unless="${m.active}">비활성</span>
+          </td>
+        </tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <div id="team-modal" class="modal-overlay" style="display:none" data-ui-modal-size="compact" data-ui-edit-modal data-ui-edit-record="#team-edit-id">
+    <div class="modal" style="width:520px" role="dialog" aria-modal="true" aria-labelledby="team-modal-title">
+      <div class="modal-header">
+        <h3 class="modal-title" id="team-modal-title">팀 추가</h3>
+        <button class="modal-close" onclick="closeTeamModal()" aria-label="닫기">×</button>
+      </div>
+      <div class="modal-body">
+        <input type="hidden" id="team-edit-id">
+        <div class="form-grid">
+          <div class="form-group full">
+            <label class="form-label" for="team-name">팀명 <span class="req">*</span></label>
+            <input class="form-input" id="team-name" placeholder="플랫폼개발팀">
+          </div>
+          <div class="form-group full">
+            <label class="form-label" for="team-desc">설명</label>
+            <input class="form-input" id="team-desc" placeholder="팀 설명">
+          </div>
+          <div class="form-group full">
+            <label class="form-label" for="team-leader">팀장</label>
+            <select class="form-select" id="team-leader">
+              <option value="">미지정</option>
+              <option th:each="u : ${allUsers}" th:value="${u.id}" th:text="${u.name + ' (' + u.loginId + ')'}">사용자</option>
+            </select>
+          </div>
+          <div class="form-group full">
+            <label class="form-label" for="team-members">팀원</label>
+            <select class="form-select" id="team-members" multiple style="height:160px">
+              <option th:each="u : ${allUsers}" th:value="${u.id}" th:text="${u.name + ' (' + u.loginId + ' / ' + u.role.label + ')'}">사용자</option>
+            </select>
+            <p class="form-hint" style="margin-top:4px">Ctrl 또는 Shift 클릭으로 복수 선택합니다.</p>
+          </div>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-ghost" onclick="closeTeamModal()" data-ui-edit-cancel>취소</button>
+        <button class="btn btn-primary" onclick="submitTeamModal()" data-ui-edit-save>저장</button>
+      </div>
+    </div>
+  </div>
+
+  <script>
+  function openTeamModalFromBtn(btn) {
+    const memberIds = btn.dataset.memberids ? btn.dataset.memberids.split(',').filter(Boolean) : [];
+    openTeamModal(btn.dataset.id, btn.dataset.name, btn.dataset.desc, btn.dataset.leaderid, memberIds);
+  }
+  function openTeamModal(id, name, desc, leaderId, memberIds) {
+    const isEdit = !!id;
+    document.getElementById('team-modal-title').textContent = isEdit ? '팀 편집' : '팀 추가';
+    document.getElementById('team-edit-id').value = id || '';
+    document.getElementById('team-name').value = name || '';
+    document.getElementById('team-desc').value = desc || '';
+    const leaderSelect = document.getElementById('team-leader');
+    leaderSelect.value = leaderId || '';
+    if (window.DeploySelect) window.DeploySelect.sync(leaderSelect);
+    Array.from(document.getElementById('team-members').options).forEach(o => {
+      o.selected = (memberIds || []).includes(o.value);
+    });
+    document.getElementById('team-modal').style.display = 'flex';
+  }
+  function closeTeamModal() {
+    document.getElementById('team-modal').style.display = 'none';
+  }
+  function deleteTeam(btn) {
+    const id = btn.dataset.id;
+    const name = btn.dataset.name;
+    openConfirm('팀 삭제', `"${name}" 팀을 삭제하시겠습니까?\n팀원의 팀 배정은 해제됩니다.`, () => {
+      const csrfToken = document.querySelector('meta[name="_csrf"]').content;
+      const csrfHeader = document.querySelector('meta[name="_csrf_header"]').content;
+      fetch(`/api/v1/teams/${id}`, { method: 'DELETE', headers: { [csrfHeader]: csrfToken } })
+        .then(r => r.json())
+        .then(data => {
+          if (data.success) { showToast(data.message, 'success'); navigate('teams'); }
+          else showToast(data.message || '삭제 실패', 'error');
+        })
+        .catch(() => showToast('네트워크 오류', 'error'));
+    });
+  }
+  function submitTeamModal() {
+    const id = document.getElementById('team-edit-id').value;
+    const memberIds = Array.from(document.getElementById('team-members').selectedOptions).map(o => parseInt(o.value));
+    const leaderId = document.getElementById('team-leader').value;
+    const body = {
+      name: document.getElementById('team-name').value,
+      description: document.getElementById('team-desc').value || null,
+      leaderId: leaderId ? parseInt(leaderId) : null,
+      memberIds
+    };
+    if (!body.name) { showToast('팀명은 필수입니다.', 'error'); return; }
+    const csrfToken = document.querySelector('meta[name="_csrf"]').content;
+    const csrfHeader = document.querySelector('meta[name="_csrf_header"]').content;
+    fetch(id ? `/api/v1/teams/${id}` : '/api/v1/teams', {
+      method: id ? 'PUT' : 'POST',
+      headers: { 'Content-Type': 'application/json', [csrfHeader]: csrfToken },
+      body: JSON.stringify(body)
+    })
+      .then(r => r.json())
+      .then(data => {
+        if (data.success) {
+          showToast(data.message, 'success');
+          closeTeamModal();
+          navigate('teams');
+        } else {
+          showToast(data.message || '오류가 발생했습니다.', 'error');
+        }
+      })
+      .catch(() => showToast('네트워크 오류가 발생했습니다.', 'error'));
+  }
+  </script>
+
+</th:block>
+</body>
+</html>

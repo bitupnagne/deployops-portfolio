@@ -1,0 +1,22 @@
+CREATE TABLE nexus_cleanup_request (
+  id BIGINT NOT NULL AUTO_INCREMENT,
+  project_id BIGINT NOT NULL,
+  requested_by_id BIGINT NOT NULL,
+  approved_by_id BIGINT NULL,
+  status VARCHAR(24) NOT NULL,
+  repository_path VARCHAR(500) NOT NULL,
+  image_repository VARCHAR(500) NOT NULL,
+  image_tag VARCHAR(255) NOT NULL,
+  image_digest VARCHAR(100) NOT NULL,
+  reason VARCHAR(1000) NOT NULL,
+  result_message VARCHAR(2000) NULL,
+  created_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
+  approved_at DATETIME(6) NULL,
+  completed_at DATETIME(6) NULL,
+  PRIMARY KEY (id),
+  KEY idx_nexus_cleanup_status_created (status, created_at),
+  KEY idx_nexus_cleanup_project_created (project_id, created_at),
+  CONSTRAINT fk_nexus_cleanup_project FOREIGN KEY (project_id) REFERENCES project (id),
+  CONSTRAINT fk_nexus_cleanup_requester FOREIGN KEY (requested_by_id) REFERENCES users (id),
+  CONSTRAINT fk_nexus_cleanup_approver FOREIGN KEY (approved_by_id) REFERENCES users (id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;

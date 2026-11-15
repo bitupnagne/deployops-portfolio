@@ -1,0 +1,470 @@
+<!DOCTYPE html>
+<html xmlns:th="http://www.thymeleaf.org" xmlns:sec="http://www.thymeleaf.org/extras/spring-security">
+<body>
+<th:block th:fragment="content">
+  <div class="page-header">
+    <div>
+      <h2 class="page-title">Nginx 정책</h2>
+      <p class="page-desc">WEB 서버의 리버스 프록시·정적 사이트·TLS 정책을 승인과 복구 이력으로 관리합니다.</p>
+    </div>
+    <button class="btn btn-ghost" type="button" onclick="inspectSelectedNginx()" sec:authorize="hasAnyRole('OPERATOR','APPROVER','SUPER_ADMIN')">설치 상태 확인</button>
+  </div>
+
+  <div class="page-help">
+    <svg class="ico" width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4M12 8h.01"/></svg>
+    <div>설정과 인증서는 승인 전까지 적용되지 않습니다. 요청자와 승인자는 달라야 하며, 적용 전 현재 설정과 인증서가 자동 백업됩니다.</div>
+  </div>
+
+  <div class="section-card" sec:authorize="hasAnyRole('OPERATOR','SUPER_ADMIN')">
+    <div class="section-header"><div><h2 class="section-title">변경 요청</h2><p class="section-desc">허용된 항목만 설정 파일로 생성됩니다.</p></div></div>
+    <form id="nginx-policy-form" enctype="multipart/form-data" onsubmit="submitNginxPolicy(event)">
+      <div class="form-grid">
+        <div class="form-group">
+          <label class="form-label" for="ng-server">WEB 서버 <span class="req">*</span></label>
+          <select class="form-select" id="ng-server" name="serverId" required onchange="syncNginxUpstreams()">
+            <option th:if="${nginxContextServer == null}" value="">선택</option>
+            <option th:each="server : ${webServers}" th:value="${server.id}" th:selected="${nginxContextServer != null and nginxContextServer.id == server.id}" th:attr="data-environment=${server.environment}" th:text="${server.name + ' (' + server.ipAddress + ')'}">web01</option>
+          </select>
+        </div>
+        <div class="form-group">
+          <label class="form-label" for="ng-policy">정책 이름 <span class="req">*</span></label>
+          <input class="form-input mono" id="ng-policy" name="policyName" required maxlength="80" pattern="[A-Za-z0-9][A-Za-z0-9._\-]{0,79}" placeholder="office-portal">
+        </div>
+        <div class="form-group">
+          <label class="form-label" for="ng-policy-type">서비스 방식 <span class="req">*</span></label>
+          <select class="form-select" id="ng-policy-type" name="policyType" required onchange="toggleNginxPolicyType()">
+            <option value="REVERSE_PROXY">리버스 프록시(Spring Boot·API·Thymeleaf)</option>
+            <option value="STATIC_SPA">정적 SPA(React 라우팅)</option>
+            <option value="STATIC_FILES">정적 파일(없는 경로는 404)</option>
+          </select>
+        </div>
+        <div class="form-group">
+          <label class="form-label" for="ng-server-name">server name <span class="req">*</span></label>
+          <input class="form-input mono" id="ng-server-name" name="serverName" required placeholder="portal.company.local">
+        </div>
+        <div class="form-group">
+          <label class="form-label" for="ng-listen">listen 포트</label>
+          <input class="form-input" id="ng-listen" name="listenPort" type="number" min="1" max="65535" value="443">
+        </div>
+      </div>
+      <section class="nginx-code-panel" aria-labelledby="nginx-code-title">
+        <div class="nginx-code-toolbar">
+          <div><h3 class="section-title" id="nginx-code-title">Nginx 설정 편집</h3><p class="form-hint">아래 변경안의 실제 설정문이 승인 요청에 저장됩니다. 템플릿 입력값을 바꿔도 작성 중인 설정문을 자동으로 덮어쓰지 않습니다.</p></div>
+          <button type="button" class="btn btn-ghost sm" onclick="generateNginxEditorTemplate()">입력값으로 기본 설정 생성</button>
+        </div>
+        <div class="nginx-code-toolbar">
+          <div class="nginx-feature-tools"><label class="form-label" for="nginx-config-feature">기능 추가</label><select id="nginx-config-feature" class="form-select"><option value="reverse-proxy">리버스 프록시</option><option value="tls">TLS 인증서</option><option value="websocket">WebSocket</option><option value="static-spa">정적 SPA</option><option value="static-files">정적 파일</option><option value="security-headers">보안 헤더</option><option value="timeouts">프록시 제한시간</option><option value="upload">업로드 크기</option><option value="gzip">Gzip 압축</option></select><button type="button" class="btn btn-ghost sm" onclick="insertNginxEditorFeature()">편집기에 추가</button></div>
+          <button type="button" class="rbtn" onclick="loadCurrentNginxConfiguration()">현재 적용 설정 읽기</button>
+        </div>
+        <details class="nginx-current-config" id="nginx-current-config">
+          <summary>현재 WEB 서버에 적용된 설정 <span id="nginx-current-status">아직 읽지 않음</span></summary>
+          <p class="form-hint">선택한 정책의 실제 관리 파일을 읽습니다. 변경안과 별도로 보관하며, 읽기만으로 변경안은 바뀌지 않습니다.</p>
+          <textarea id="nginx-current-editor" class="ci-editor mono" rows="10" readonly spellcheck="false" aria-label="현재 적용 중인 Nginx 설정"></textarea>
+          <div class="nginx-code-toolbar"><span id="nginx-current-sha" class="form-hint mono"></span><button type="button" class="rbtn" onclick="useCurrentNginxConfiguration()">현재 설정으로 편집 시작</button></div>
+        </details>
+        <label class="form-label" for="nginx-config-editor">변경안 <span class="req">*</span></label>
+        <textarea id="nginx-config-editor" class="ci-editor mono" name="rawConfig" rows="20" required spellcheck="false" aria-describedby="nginx-editor-status nginx-editor-help" oninput="updateNginxEditorStatus()" placeholder="기본 설정을 생성하거나 현재 적용 설정을 불러온 뒤 직접 수정하세요."></textarea>
+        <div id="nginx-editor-status" class="form-hint" aria-live="polite">설정문을 작성해 주세요.</div>
+        <p id="nginx-editor-help" class="form-hint">기능 추가는 선택 영역을 교체하거나 server 블록 안에 지시문을 삽입합니다. 기존 항목과 중복되는 지시문은 편집기로 정리하세요. TLS 인증서 파일은 위의 업로드 항목을 사용합니다. 저장 후에는 별도 승인자의 검토와 서버의 Nginx 검증을 거쳐 적용합니다.</p>
+      </section>
+      <details class="nginx-template-settings">
+        <summary>WAS·TLS·정적 리소스 템플릿 상세 설정</summary>
+        <p class="form-hint">기본 설정 생성에 사용할 WAS, 인증서, 프록시 옵션입니다. 값을 바꾼 뒤 기본 설정 생성 버튼을 누르면 변경안에 반영할 수 있습니다.</p>
+        <div class="form-grid">
+        <div class="form-group ng-static-field" style="display:none">
+          <label class="form-label" for="ng-web-root">정적 배포 루트 <span class="req">*</span></label>
+          <input class="form-input mono" id="ng-web-root" name="webRoot" placeholder="/var/www/portal">
+          <div class="form-hint">STATIC_BUNDLE 컴포넌트의 WebRoot와 같아야 하며 Nginx는 이 경로의 current 릴리스를 제공합니다.</div>
+        </div>
+        <div class="form-group ng-proxy-field ng-legacy-upstream">
+          <label class="form-label" for="ng-upstream-host">upstream 호스트 <span class="req">*</span></label>
+          <input class="form-input mono" id="ng-upstream-host" name="upstreamHost" required placeholder="198.18.12.40">
+        </div>
+        <div class="form-group full ng-static-field" style="display:none">
+          <label><input type="checkbox" id="ng-api-proxy" name="apiProxyEnabled" value="true" onchange="toggleNginxPolicyType()"> API 경로 프록시 사용</label>
+          <div class="form-hint">지정한 경로만 API 서버로 전달하며 나머지 경로는 정적 리소스를 제공합니다. API 요청 경로를 그대로 유지합니다.</div>
+        </div>
+        <div class="form-group ng-api-field" style="display:none">
+          <label class="form-label" for="ng-api-prefix">API 경로 <span class="req">*</span></label>
+          <input class="form-input mono" id="ng-api-prefix" name="apiPrefix" maxlength="80" placeholder="/api/" disabled>
+          <div class="form-hint">예: /api/ 또는 /backend/api/ · 경로 끝에 /를 붙이세요.</div>
+        </div>
+        <div class="form-group ng-api-field ng-legacy-upstream" style="display:none">
+          <label class="form-label" for="ng-api-host">API upstream 호스트 <span class="req">*</span></label>
+          <input class="form-input mono" id="ng-api-host" name="apiUpstreamHost" maxlength="255" placeholder="198.18.12.40" disabled>
+        </div>
+        <div class="form-group ng-api-field ng-legacy-upstream" style="display:none">
+          <label class="form-label" for="ng-api-port">API upstream 포트 <span class="req">*</span></label>
+          <input class="form-input" id="ng-api-port" name="apiUpstreamPort" type="number" min="1" max="65535" value="8080" disabled>
+        </div>
+        <div class="form-group ng-proxy-field ng-legacy-upstream">
+          <label class="form-label" for="ng-upstream-port">upstream 포트 <span class="req">*</span></label>
+          <input class="form-input" id="ng-upstream-port" name="upstreamPort" type="number" min="1" max="65535" value="8080" required>
+        </div>
+        <div class="form-group full ng-upstream-choice">
+          <label class="form-label">WAS 목록 (순서 유지)</label>
+          <div id="ng-upstream-rows"></div>
+          <button type="button" class="btn btn-ghost sm" onclick="addNginxUpstream()">WAS 추가</button>
+          <div class="form-hint">등록된 WAS와 서비스 포트를 선택하세요. 최대 32개이며 요청 때 주소와 순서를 보관합니다. WEB별로 승인합니다.</div>
+        </div>
+        <div class="form-group full ng-upstream-choice">
+          <label class="form-label" for="ng-was-vip">연결 방식</label>
+          <select class="form-select" id="ng-was-vip" onchange="syncNginxUpstreams()">
+            <option value="">개별 WAS 직접 연결 — 위 목록 사용</option>
+            <option th:each="vip : ${nginxWasVipChoices}" th:value="${vip.projectId + ':' + vip.groupId}" th:text="${vip.projectName + ' / ' + vip.groupName + ' → VIP ' + vip.address + ':' + vip.port}">외부 WAS VIP</option>
+          </select>
+          <p class="form-hint">VIP는 이 WEB과 같은 환경이며 프로젝트에 연결된 그룹만 선택할 수 있습니다. 프로젝트 VIP 포트 설정 후 표시됩니다. 기본 설정 생성 시 등록된 주소·포트가 원문에 입력됩니다. 기존 원문은 자동 변경하지 않습니다. L4 개별 노드 제어와 무중단은 보장하지 않습니다.</p>
+        </div>
+        <template id="ng-upstream-row-template">
+          <div class="ng-upstream-row" style="display:flex;gap:8px;margin-bottom:8px">
+            <select class="form-select" data-upstream-server required aria-label="WAS 서버">
+              <option value="">WAS 선택</option><option th:each="was : ${wasServers}" th:value="${was.id}" th:attr="data-environment=${was.environment},data-ip=${was.ipAddress}" th:text="${was.name + ' (' + was.ipAddress + ')'}">WAS</option>
+            </select>
+            <input class="form-input" data-upstream-port type="number" min="1" max="65535" value="8080" required aria-label="WAS 서비스 포트">
+            <button type="button" class="btn btn-ghost sm" onclick="moveNginxUpstream(this,-1)" aria-label="위로">↑</button>
+            <button type="button" class="btn btn-ghost sm" onclick="moveNginxUpstream(this,1)" aria-label="아래로">↓</button>
+            <button type="button" class="btn btn-ghost sm" onclick="removeNginxUpstream(this)">삭제</button>
+          </div>
+        </template>
+        <div class="form-group ng-proxy-options"><label class="form-label">연결 제한시간(초)</label><input class="form-input" name="proxyConnectTimeoutSec" type="number" min="1" max="30" value="3"></div>
+        <div class="form-group ng-proxy-options"><label class="form-label">실패 횟수</label><input class="form-input" name="upstreamMaxFails" type="number" min="1" max="10" value="1"></div>
+        <div class="form-group ng-proxy-options"><label class="form-label">실패 제외시간(초)</label><input class="form-input" name="upstreamFailTimeoutSec" type="number" min="1" max="300" value="10"></div>
+        <div class="form-group">
+          <label class="form-label" for="ng-body">최대 업로드 크기(MB)</label>
+          <input class="form-input" id="ng-body" name="clientMaxBodyMb" type="number" min="0" max="10240" value="50">
+        </div>
+        <div class="form-group ng-proxy-options">
+          <label class="form-label" for="ng-read-timeout">프록시 timeout(초)</label>
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
+            <input class="form-input" id="ng-read-timeout" name="proxyReadTimeoutSec" type="number" min="1" max="3600" value="300" aria-label="읽기 timeout">
+            <input class="form-input" name="proxySendTimeoutSec" type="number" min="1" max="3600" value="300" aria-label="전송 timeout">
+          </div>
+        </div>
+        <div class="form-group full">
+          <label class="form-label" for="ng-cidrs">접근 허용 IP/CIDR</label>
+          <input class="form-input mono" id="ng-cidrs" name="allowedCidrs" placeholder="198.18.13.0/16, 198.18.14.20">
+        </div>
+      </div>
+
+      <div style="display:flex;flex-wrap:wrap;gap:18px;margin:18px 0">
+        <label><input type="checkbox" name="websocketEnabled" value="true"> WebSocket</label>
+        <label><input type="checkbox" name="proxyBuffering" value="true" checked> proxy buffering</label>
+        <label><input type="checkbox" name="securityHeaders" value="true" checked> 보안 헤더</label>
+        <label><input type="checkbox" id="ng-tls" name="tlsEnabled" value="true" checked onchange="toggleTlsFields()"> TLS</label>
+        <label><input type="checkbox" name="tls12" value="true" checked> TLS 1.2</label>
+        <label><input type="checkbox" name="tls13" value="true" checked> TLS 1.3</label>
+        <label><input type="checkbox" name="http2Enabled" value="true" checked> HTTP/2</label>
+        <label><input type="checkbox" name="redirectHttp" value="true" checked> HTTP→HTTPS</label>
+        <label><input type="checkbox" name="hstsEnabled" value="true" checked> HSTS</label>
+      </div>
+
+      <div id="ng-tls-files" class="form-grid">
+        <div class="form-group">
+          <label class="form-label" for="ng-cert-name">인증서 이름</label>
+          <input class="form-input mono" id="ng-cert-name" name="certificateName" maxlength="120" pattern="[A-Za-z0-9._\-]*" placeholder="company-wildcard">
+        </div>
+        <div class="form-group"></div>
+        <div class="form-group">
+          <label class="form-label" for="ng-cert">인증서 PEM</label>
+          <input class="form-input" id="ng-cert" name="certificate" type="file" accept=".pem,.crt,.cer">
+        </div>
+        <div class="form-group">
+          <label class="form-label" for="ng-key">개인키 PEM</label>
+          <input class="form-input" id="ng-key" name="privateKey" type="file" accept=".pem,.key">
+        </div>
+      </div>
+      </details>
+      <div class="page-actions" style="justify-content:flex-end;margin-top:18px">
+        <button class="btn btn-primary" type="submit">승인 요청</button>
+      </div>
+    </form>
+  </div>
+
+  <!-- 만료 임박 경고. 폐쇄망이라 외부 모니터링이 없어, 여기서 보이지 않으면 만료를
+       장애로만 알게 된다. 목록은 서버·정책별 <현재 적용 중인> 인증서만 본다. -->
+  <div class="section-card" id="cert-expiry-card" style="display:none;border:1px solid var(--red)">
+    <div class="section-header"><div><h2 class="section-title">인증서 만료 임박</h2>
+      <p class="section-desc">현재 적용 중인 TLS 인증서 가운데 30일 이내 만료되거나 이미 만료된 것입니다.</p></div></div>
+    <div class="table-wrap">
+      <table class="data-table">
+        <thead><tr><th scope="col">정책</th><th scope="col">서버</th><th scope="col">인증서</th><th scope="col">만료일</th><th scope="col">남은 기간</th></tr></thead>
+        <tbody id="cert-expiry-body"></tbody>
+      </table>
+    </div>
+  </div>
+
+  <div class="section-card">
+    <div class="section-header"><div><h2 class="section-title">변경 이력</h2><p class="section-desc">승인, 적용 결과와 자동 백업 위치를 확인합니다.</p></div></div>
+    <div class="table-wrap" role="region" aria-label="Nginx 변경 이력 표 — 가로로 스크롤할 수 있습니다" tabindex="0">
+      <table class="data-table nginx-history-table">
+        <colgroup>
+          <col style="width:260px"><col style="width:240px"><col style="width:320px">
+          <col style="width:140px"><col style="width:220px"><col style="width:340px"><col style="width:200px">
+        </colgroup>
+        <thead><tr><th scope="col">요청</th><th scope="col">대상</th><th scope="col">프록시</th><th scope="col">TLS</th><th scope="col">요청자 / 승인자</th><th scope="col">상태</th><th scope="col">작업</th></tr></thead>
+        <tbody>
+          <tr th:if="${#lists.isEmpty(nginxChanges)}"><td colspan="7" style="text-align:center;padding:28px;color:var(--muted)">변경 요청이 없습니다.</td></tr>
+          <tr th:each="change : ${nginxChanges}" th:attr="data-nginx-change-id=${change.id}">
+            <td><strong class="mono" th:text="${'#' + change.id + ' ' + change.policyName}">#1 policy</strong><div class="form-hint" th:if="${change.rollbackOfId != null}" th:text="${'복구 요청 · 현재 동작 #' + change.rollbackOfId}">복구 요청</div><div class="form-hint" th:if="${change.rollbackSnapshotHash != null}" th:text="${change.restoreAbsent ? '복원 대상: 설정 없음' : '실제 복원 설정 #' + change.restoreTargetId}">복원 대상</div><div class="form-hint mono" th:if="${change.rollbackSnapshotHash != null}" th:text="${'승인 백업 SHA256 ' + change.rollbackSnapshotHash}">digest</div><div class="form-hint" th:text="${#temporals.format(change.createdAt, 'yyyy-MM-dd HH:mm')}">date</div></td>
+            <td><span th:text="${change.server.name}">web01</span><div class="form-hint mono" th:text="${change.serverName + ':' + change.listenPort}">host:443</div></td>
+            <td th:if="${change.restoreAbsent}"><strong>관리 정책 제거</strong><div class="form-hint">이전 설정이 없던 상태로 복원합니다.</div></td><td th:unless="${change.restoreAbsent}"><p class="form-hint" th:if="${change.rawConfig != null}"><strong>직접 편집한 설정 적용 · 설정 원문 보기</strong><br>아래 요약은 템플릿 입력값 기준입니다.</p><span th:text="${change.policyType.label}">리버스 프록시</span><div class="form-hint mono" th:text="${change.policyType.name() == 'REVERSE_PROXY' ? change.upstreamHost + ':' + change.upstreamPort : change.webRoot + '/current'}">host:8080</div><div class="form-hint mono" th:if="${change.hasSecondaryUpstream()}" th:text="${'두 번째 WAS ' + change.secondaryUpstreamHost + ':' + change.secondaryUpstreamPort + ' · 연결 ' + change.proxyConnectTimeoutSec + '초 · 실패 ' + change.upstreamMaxFails + '회/' + change.upstreamFailTimeoutSec + '초'}">두 번째 WAS</div><div class="form-hint mono ng-api-preview" th:if="${change.apiProxyEnabled}" th:text="${'API ' + change.apiPrefix + ' → ' + change.apiUpstreamHost + ':' + change.apiUpstreamPort + ' (경로 유지)'}">API 경로</div><div class="form-hint mono" th:each="endpoint : ${change.effectiveUpstreams}" th:text="${endpoint.purpose + ' WAS ' + (endpoint.position + 1) + ': ' + endpoint.host + ':' + endpoint.port}">WAS 목록</div><div class="form-hint" th:text="${'업로드 ' + change.clientMaxBodyMb + 'MB · timeout ' + change.proxyReadTimeoutSec + '/' + change.proxySendTimeoutSec + '초'}">정책</div><div class="form-hint" th:if="${change.allowedCidrs != null}" th:text="${'허용 ' + change.allowedCidrs}">허용 CIDR</div><div class="form-hint" th:text="${change.securityHeaders ? '보안 헤더 사용' : '보안 헤더 미사용'}">보안 헤더</div></td>
+            <td>
+              <div th:if="${change.rawConfig != null}" class="form-hint"><strong>직접 편집한 설정 적용</strong><br>설정 원문에서 실제 지시문을 확인하세요.</div>
+              <span th:text="${change.restoreAbsent ? '이전 백업 상태로 복원' : (change.rawConfig != null ? '템플릿 기준: ' + (change.tlsEnabled ? change.tlsProtocols : 'TLS 사용 안 함') : (change.tlsEnabled ? change.tlsProtocols : '사용 안 함'))}">TLS</span>
+              <!-- 인증서 신원과 만료. 에이전트가 apply 때 돌려준 값이라 실제로 적용된 것이 보인다. -->
+              <div class="form-hint" th:if="${change.certificateSubject != null}"
+                   th:text="${change.certificateSubject}">CN=...</div>
+              <div class="form-hint" th:if="${change.certificateNotAfter != null}"
+                   th:text="${'만료 ' + #temporals.format(change.certificateNotAfter, 'yyyy-MM-dd')}">만료 ...</div>
+            </td>
+            <td><span th:text="${change.requestedBy.name}">요청자</span><span th:if="${change.approvedBy != null}" th:text="${' / ' + change.approvedBy.name}"> / 승인자</span></td>
+            <td><span class="status-badge" th:classappend="${change.status.name() == 'APPLIED' or change.status.name() == 'ROLLED_BACK'} ? ' completed' : (${change.status.name() == 'FAILED' or change.status.name() == 'REJECTED' or change.status.name() == 'RESULT_UNKNOWN'} ? ' failed' : ' approval-pending')" th:text="${change.status.label}">승인 대기</span><div class="form-hint" th:if="${!#strings.isEmpty(nginxDisplayErrors[change.id])}" th:text="${nginxDisplayErrors[change.id]}">오류</div>
+              <div class="form-hint" th:if="${change.status.name() == 'RESULT_UNKNOWN'}">실행됐을 수 있으므로 다시 적용하거나 복구하지 않습니다. 서버의 에이전트 작업 결과와 현재 설정을 먼저 확인해 주세요.</div>
+              <div class="nginx-backup-proof" sec:authorize="hasAnyRole('OPERATOR','APPROVER','SUPER_ADMIN')"
+                   th:if="${(change.status.name() == 'APPLIED' or change.status.name() == 'ROLLED_BACK') and change.backupPath != null and change.backupSnapshotHash != null}">
+                <div class="form-hint mono" th:text="${'자동 백업 위치 ' + change.backupPath}">자동 백업 위치</div>
+                <div class="form-hint mono" th:text="${'백업 SHA-256 ' + change.backupSnapshotHash}">백업 SHA-256</div>
+                <div class="form-hint mono" th:if="${change.appliedSnapshotHash != null}" th:text="${'적용 상태 SHA-256 ' + change.appliedSnapshotHash}">적용 상태 SHA-256</div>
+                <div class="form-hint mono" th:if="${change.appliedConfigHash != null}" th:text="${'적용 설정 SHA-256 ' + change.appliedConfigHash}">적용 설정 SHA-256</div>
+              </div>
+            </td>
+            <td style="white-space:nowrap">
+              <button class="btn btn-ghost sm" type="button" th:onclick="|showNginxRequestConfig(${change.id})|">설정 원문</button>
+              <button class="btn btn-ghost sm" type="button" th:attr="data-server-id=${change.server.id},data-policy-name=${change.policyName}" onclick="showCurrentNginxRequestConfig(this)">현재 적용 설정</button>
+              <th:block th:if="${change.status.name() == 'PENDING' and currentUser.id != change.requestedBy.id}" sec:authorize="hasAnyRole('APPROVER','SUPER_ADMIN')">
+                <button class="btn btn-primary sm" type="button" th:onclick="|approveNginx(${change.id})|">승인·적용</button>
+                <button class="btn btn-ghost sm" type="button" th:onclick="|rejectNginx(${change.id})|">반려</button>
+              </th:block>
+              <button th:if="${(change.status.name() == 'APPLIED' or change.status.name() == 'ROLLED_BACK') and change.backupSnapshotHash != null}" sec:authorize="hasAnyRole('OPERATOR','SUPER_ADMIN')" class="btn btn-ghost sm" type="button" th:onclick="|requestNginxRollback(${change.id})|">복구 요청</button>
+            </td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <section class="section-card" id="nginx-inspect-result" hidden>
+    <h3 class="section-title">선택한 WEB 서버 진단 결과</h3>
+    <p class="form-hint">설치·서비스 실행 상태의 진단 결과입니다. 설정 검증과 실제 서비스 응답은 적용 결과에서 별도로 확인합니다.</p>
+    <pre class="nginx-diagnostic-output"></pre>
+  </section>
+
+  <div id="nginx-config-viewer-modal" class="modal-overlay" style="display:none">
+    <div class="modal nginx-config-viewer" role="dialog" aria-modal="true" aria-labelledby="nginx-config-viewer-title">
+      <div class="modal-header"><h3 class="modal-title" id="nginx-config-viewer-title">승인 요청 설정 원문</h3><button class="modal-close" type="button" onclick="closeNginxRequestConfig()" aria-label="닫기">×</button></div>
+      <div class="modal-body"><p id="nginx-request-config-status" class="form-hint"></p><textarea id="nginx-request-config" class="ci-editor mono" readonly spellcheck="false" aria-label="승인 요청에 저장된 Nginx 설정 원문"></textarea><p class="form-hint mono" id="nginx-request-config-sha"></p></div>
+      <div class="modal-footer"><button class="btn btn-ghost" type="button" onclick="closeNginxRequestConfig()">닫기</button></div>
+    </div>
+  </div>
+
+  <div id="nginx-reject-modal" class="modal-overlay" style="display:none">
+    <div class="modal" style="width:480px" role="dialog" aria-modal="true" aria-labelledby="nginx-reject-title">
+      <div class="modal-header"><h3 class="modal-title" id="nginx-reject-title">Nginx 변경 반려</h3><button class="modal-close" type="button" onclick="closeNginxReject()" aria-label="닫기">×</button></div>
+      <div class="modal-body">
+        <input type="hidden" id="nginx-reject-id">
+        <div class="form-group"><label class="form-label" for="nginx-reject-reason">반려 사유 <span class="req">*</span></label><textarea class="form-input" id="nginx-reject-reason" rows="4" maxlength="2000"></textarea></div>
+      </div>
+      <div class="modal-footer"><button class="btn btn-ghost" type="button" onclick="closeNginxReject()">취소</button><button class="btn btn-primary" type="button" onclick="submitNginxReject()">반려</button></div>
+    </div>
+  </div>
+
+  <script src="/js/nginx-config-editor.js"></script>
+  <script>
+  function reloadNginxWorkspace() {
+    const workspace = document.getElementById('nginx-server-workspace');
+    navigate('server-groups', null, workspace ? {nginxServerId: workspace.dataset.nginxServerId} : null);
+  }
+  function nginxCsrfHeaders(extra) {
+    const token = document.querySelector('meta[name="_csrf"]').content;
+    const header = document.querySelector('meta[name="_csrf_header"]').content;
+    return Object.assign({[header]: token}, extra || {});
+  }
+  function nginxResult(response) {
+    const contentType = response.headers && response.headers.get('content-type') || '';
+    const isJson = contentType.toLowerCase().includes('application/json');
+    let responsePath = '';
+    try { responsePath = new URL(response.url, window.location.origin).pathname; } catch (_) { /* 비정상 URL은 일반 응답 오류로 처리 */ }
+    if (!isJson && responsePath.replace(/\/+$/, '') === '/login') {
+      window.location.assign('/login?expired=1');
+      throw new Error('로그인 세션이 만료되었습니다. 다시 로그인해 주세요.');
+    }
+    if (!isJson) throw new Error('서버 응답을 확인할 수 없습니다. 잠시 후 다시 시도해 주세요.');
+    return response.json().then(body => {
+      if (!response.ok || !body.success) throw new Error(body.message || '요청 처리에 실패했습니다.');
+      return body;
+    });
+  }
+  function toggleTlsFields() {
+    const form = document.getElementById('nginx-policy-form');
+    const tls = document.getElementById('ng-tls');
+    if (!form || !tls) return;
+    const enabled = tls.checked;
+    document.getElementById('ng-tls-files').style.display = enabled ? 'grid' : 'none';
+    ['tls12','tls13','http2Enabled','redirectHttp','hstsEnabled'].forEach(name => {
+      form.elements[name].disabled = !enabled;
+    });
+    ['ng-cert-name','ng-cert','ng-key'].forEach(id => {
+      document.getElementById(id).disabled = !enabled;
+    });
+  }
+  function toggleNginxPolicyType() {
+    const type = document.getElementById('ng-policy-type');
+    if (!type) return;
+    const proxy = type.value === 'REVERSE_PROXY';
+    const apiToggle = document.getElementById('ng-api-proxy');
+    apiToggle.disabled = proxy;
+    const api = !proxy && apiToggle.checked;
+    document.querySelectorAll('.ng-proxy-field').forEach(node => node.style.display = proxy ? '' : 'none');
+    document.querySelectorAll('.ng-static-field').forEach(node => node.style.display = proxy ? 'none' : '');
+    ['ng-upstream-host','ng-upstream-port','ng-api-host','ng-api-port'].forEach(id=>{const f=document.getElementById(id);f.disabled=true;f.required=false;});
+    document.getElementById('ng-web-root').required = !proxy;
+    document.querySelectorAll('.ng-upstream-choice').forEach(node => node.style.display = proxy || api ? '' : 'none');
+    syncNginxUpstreams();
+    document.querySelectorAll('.ng-api-field').forEach(node => node.style.display = api ? '' : 'none');
+    document.querySelectorAll('.ng-proxy-options').forEach(node => node.style.display = proxy || api ? '' : 'none');
+    ['ng-api-prefix'].forEach(id => {
+      const field = document.getElementById(id);
+      field.disabled = !api;
+      field.required = api;
+    });
+  }
+  function syncNginxUpstreams() {
+    const proxyEnabled=document.getElementById('ng-policy-type').value==='REVERSE_PROXY'||document.getElementById('ng-api-proxy').checked;
+    const vip = document.getElementById('ng-was-vip');
+    if (vip) vip.disabled = !proxyEnabled;
+    const enabled=proxyEnabled && !vip?.value;
+    document.querySelectorAll('.ng-legacy-upstream').forEach(n=>n.style.display='none');
+    document.querySelectorAll('#ng-upstream-rows .ng-upstream-row').forEach((row,i)=>{
+      const server=row.querySelector('[data-upstream-server]'),port=row.querySelector('[data-upstream-port]');
+      server.name=`upstreams[${i}].serverId`;port.name=`upstreams[${i}].port`;
+      const web=document.getElementById('ng-server');
+      const environment=web?.selectedOptions[0]?.dataset.environment;
+      Array.from(server.options).forEach(option=>{if(option.value){option.disabled=option.dataset.environment!==environment;option.hidden=option.disabled;}});
+      if(server.selectedOptions[0]?.disabled)server.value='';
+      server.disabled=port.disabled=!enabled;server.required=port.required=enabled;
+    });
+  }
+  function addNginxUpstream() {
+    const root=document.getElementById('ng-upstream-rows');
+    if(!root)return;
+    if(root.children.length>=32){showToast('WAS는 최대 32개 선택할 수 있습니다.','error');return;}
+    root.appendChild(document.getElementById('ng-upstream-row-template').content.cloneNode(true));syncNginxUpstreams();
+  }
+  function removeNginxUpstream(button){button.closest('.ng-upstream-row').remove();syncNginxUpstreams();}
+  function moveNginxUpstream(button,direction){
+    const row=button.closest('.ng-upstream-row');
+    if(direction<0&&row.previousElementSibling)row.parentNode.insertBefore(row,row.previousElementSibling);
+    if(direction>0&&row.nextElementSibling)row.parentNode.insertBefore(row.nextElementSibling,row);
+    syncNginxUpstreams();
+  }
+  function nginxPolicyFormData(form) {
+    syncNginxUpstreams();
+    const data = new FormData(form);
+    const proxy = form.elements.policyType.value === 'REVERSE_PROXY';
+    const api = !proxy && form.elements.apiProxyEnabled.checked;
+    const vip = (proxy || api) ? document.getElementById('ng-was-vip')?.value : '';
+    data.set('upstreamListPresent',(proxy||api)&&!vip?'true':'false');
+    if (vip) { const ids=vip.split(':'); data.set('wasVipProjectId',ids[0]); data.set('wasVipGroupId',ids[1]); }
+    ['upstreamHost','upstreamPort','secondaryUpstreamEnabled','secondaryUpstreamHost','secondaryUpstreamPort','apiUpstreamHost','apiUpstreamPort'].forEach(name=>data.delete(name));
+    data.set('apiProxyEnabled', form.elements.policyType.value !== 'REVERSE_PROXY' && form.elements.apiProxyEnabled.checked ? 'true' : 'false');
+    ['websocketEnabled','proxyBuffering','securityHeaders','tlsEnabled','tls12','tls13','http2Enabled','redirectHttp','hstsEnabled']
+      .forEach(name => data.set(name, form.elements[name].checked ? 'true' : 'false'));
+    return data;
+  }
+  function submitNginxPolicy(event) {
+    event.preventDefault();
+    if (typeof validateNginxEditorDraft === 'function' && !validateNginxEditorDraft()) return;
+    const data = nginxPolicyFormData(event.currentTarget);
+    fetch('/api/v1/nginx-changes', {method:'POST', headers:nginxCsrfHeaders(), body:data})
+      .then(nginxResult).then(result => { showToast(result.message, 'success'); reloadNginxWorkspace(); })
+      .catch(error => showToast(error.message, 'error'));
+  }
+  function approveNginx(id) {
+    openConfirm('Nginx 변경 승인', '백업 후 설정 검증과 reload를 실행합니다.', () => {
+      fetch(`/api/v1/nginx-changes/${id}/approve`, {method:'POST', headers:nginxCsrfHeaders()})
+        .then(nginxResult).then(result => { showToast(result.message, 'success'); reloadNginxWorkspace(); })
+        .catch(error => { showToast(error.message, 'error'); reloadNginxWorkspace(); });
+    });
+  }
+  function rejectNginx(id) {
+    document.getElementById('nginx-reject-id').value = id;
+    document.getElementById('nginx-reject-reason').value = '';
+    document.getElementById('nginx-reject-modal').style.display = 'flex';
+    document.getElementById('nginx-reject-reason').focus();
+  }
+  function closeNginxReject() { document.getElementById('nginx-reject-modal').style.display = 'none'; }
+  function submitNginxReject() {
+    const id = document.getElementById('nginx-reject-id').value;
+    const reason = document.getElementById('nginx-reject-reason').value.trim();
+    if (!reason) { showToast('반려 사유를 입력하세요.', 'error'); return; }
+    fetch(`/api/v1/nginx-changes/${id}/reject?reason=${encodeURIComponent(reason)}`, {method:'POST', headers:nginxCsrfHeaders()})
+      .then(nginxResult).then(result => { closeNginxReject(); showToast(result.message, 'success'); reloadNginxWorkspace(); })
+      .catch(error => showToast(error.message, 'error'));
+  }
+  function requestNginxRollback(id) {
+    openConfirm('이전 설정 복구 요청', '적용 직전 자동 백업본을 대상으로 새 승인 요청을 만듭니다.', () => {
+      fetch(`/api/v1/nginx-changes/${id}/rollback-requests`, {method:'POST', headers:nginxCsrfHeaders()})
+        .then(nginxResult).then(result => { showToast(result.message, 'success'); reloadNginxWorkspace(); })
+        .catch(error => showToast(error.message, 'error'));
+    });
+  }
+  function inspectSelectedNginx() {
+    const server = document.getElementById('ng-server');
+    const serverId = server?.value || document.getElementById('nginx-server-workspace')?.dataset.nginxServerId;
+    if (!serverId) { showToast('확인할 WEB 서버를 선택하세요.', 'error'); return; }
+    fetch(`/api/v1/nginx-changes/servers/${serverId}/inspect`).then(nginxResult)
+      .then(result => {
+        const panel = document.getElementById('nginx-inspect-result');
+        if (!panel) return;
+        panel.hidden = false;
+        panel.querySelector('pre').textContent = String(result.data.output || '');
+        const status = document.querySelector(`[data-nginx-status="${serverId}"]`);
+        if (status && typeof groupNginxStatus === 'function') status.textContent = groupNginxStatus(result.data.output);
+        panel.scrollIntoView({block:'nearest'});
+      }).catch(error => showToast(error.message, 'error'));
+  }
+
+  // 만료 임박 배너. 화면 로드 시점이 아니라 호출 시점에 요소를 찾는다 —
+  // soft-nav 로 다시 들어오면 로드 때 캐싱한 참조는 이미 떨어진 노드를 가리킨다.
+  function loadNginxCertExpiry() {
+    fetch('/api/v1/nginx-changes/certificates/expiring').then(nginxResult).then(result => {
+      let rows = result.data || [];
+      if (document.getElementById('nginx-server-workspace')) {
+        const requestIds = new Set([...document.querySelectorAll('[data-nginx-change-id]')].map(row => row.dataset.nginxChangeId));
+        rows = rows.filter(row => requestIds.has(String(row.id)));
+      }
+      const card = document.getElementById('cert-expiry-card');
+      const body = document.getElementById('cert-expiry-body');
+      if (!card || !body) return;
+      if (!rows.length) { card.style.display = 'none'; return; }
+      body.replaceChildren();
+      rows.forEach(row => {
+        const tr = document.createElement('tr');
+        [row.policyName, row.serverName, row.subject, (row.notAfter || '').slice(0, 10)].forEach((value, index) => {
+          const td = document.createElement('td');
+          if (index === 0 || index === 2) td.className = 'mono';
+          td.textContent = value == null ? '' : String(value);
+          tr.appendChild(td);
+        });
+        const expiry = document.createElement('td');
+        const strong = document.createElement('strong');
+        strong.style.color = 'var(--red)';
+        strong.textContent = row.expired
+          ? `만료됨 (${Math.abs(Number(row.daysLeft) || 0)}일 경과)`
+          : `${Number(row.daysLeft) || 0}일 남음`;
+        expiry.appendChild(strong);
+        tr.appendChild(expiry);
+        body.appendChild(tr);
+      });
+      card.style.display = '';
+    }).catch(() => { /* 배너는 보조 정보다 — 실패해도 화면 전체를 막지 않는다 */ });
+  }
+  loadNginxCertExpiry();
+  addNginxUpstream();
+  toggleNginxPolicyType();
+  toggleTlsFields();
+  if (typeof updateNginxEditorStatus === 'function') updateNginxEditorStatus();
+  </script>
+</th:block>
+</body>
+</html>

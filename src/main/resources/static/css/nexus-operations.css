@@ -1,0 +1,71 @@
+/* Existing DeployOps theme; task layout from the OpenDesign Nexus review. */
+.nexus-ops { min-width: 0; }
+.nexus-ops .page-header { margin-bottom: 14px; }
+.nexus-ops .page-help { margin-bottom: 16px; }
+.nexus-ops .section-card { margin-bottom: 16px; }
+.nexus-ops .section-header > div { flex: 1 1 240px; min-width: 0; }
+.nexus-ops .section-title { font-size: 16px; }
+.nexus-ops .section-desc { line-height: 1.65; word-break: keep-all; overflow-wrap: anywhere; }
+.nexus-ops .form-hint { font-size: 12px; line-height: 1.65; margin: 8px 0 14px; overflow-wrap: anywhere; }
+.nexus-ops .form-grid { grid-template-columns: repeat(2,minmax(0,1fr)); margin-bottom: 14px; }
+.nexus-ops .form-input,.nexus-ops .form-select { width: 100%; min-height: 40px; }
+.nexus-ops .btn { min-height: 40px; white-space: normal; }
+.nexus-ops .btn-primary { color: var(--on-primary); }
+.nx-storage-card .section-header { margin-bottom: 12px; }
+.nx-storage-stats { display: grid; grid-template-columns: repeat(3,minmax(0,1fr)); gap: 16px; }
+.nx-storage-stats > div { min-width: 0; border-left: 3px solid var(--primary); padding: 4px 16px; }
+.nx-storage-stats dt { font-size: 12px; color: var(--muted); margin-bottom: 5px; }
+.nx-storage-stats dd { font-size: 24px; line-height: 1.25; font-weight: 650; color: var(--text); margin: 0; overflow-wrap: anywhere; }
+.nx-storage-summary { min-height: 64px; font-size: 13px; }
+.nx-workspace-nav { display: flex; flex-wrap: wrap; gap: 6px; margin: 20px 0 16px; padding: 6px; border: 1px solid var(--border); border-radius: var(--radius); background: var(--surface); }
+.nx-task-tab { flex: 1 1 115px; min-width: 0; border: 0; padding: 11px 14px; border-radius: var(--radius-sm); background: transparent; color: var(--muted); font: inherit; font-size: 13px; font-weight: 600; cursor: pointer; }
+.nx-task-tab:hover { background: var(--bg); color: var(--text); }
+.nx-task-tab:disabled { cursor: wait; opacity: .65; }
+.nx-task-tab[aria-selected="true"] { background: var(--primary-light); color: #00665c; box-shadow: inset 0 -3px 0 var(--primary); }
+.nx-task-panel[hidden] { display: none; }
+.nx-workspace-state[hidden],.nx-workspace-state [hidden] { display: none; }
+.nx-workspace-state { min-height: 180px; }
+.nx-workspace-state p { color: var(--muted); font-size: 13px; line-height: 1.65; margin: 18px 0 0; }
+.nx-workspace-state .btn { margin-top: 14px; }
+.nx-workspace-placeholder { display: grid; gap: 12px; max-width: 560px; }
+.nx-workspace-placeholder span { height: 14px; border-radius: 5px; background: var(--bg-secondary); }
+.nx-workspace-placeholder span:nth-child(2) { width: 78%; }
+.nx-workspace-placeholder span:nth-child(3) { width: 58%; }
+.nexus-ops:is([data-workspace-state="error"],[data-workspace-state="empty"]) .nx-workspace-placeholder { display: none; }
+.nx-task-panel:focus { outline: none; }
+.nexus-ops :is(button,a,input,select,textarea,summary,.table-wrap):focus-visible { outline: 2px solid var(--text); outline-offset: 3px; }
+.nexus-ops .nx-task-panel:focus-visible { outline: 2px solid var(--border-dark); outline-offset: 2px; }
+.nx-step-title { display: flex; align-items: center; font-size: 14px; margin: 22px 0 12px; padding-top: 18px; border-top: 1px solid var(--border); }
+.nx-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; margin: 14px 0; }
+.nexus-ops details { padding: 14px; border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--bg-secondary); margin: 16px 0; }
+.nexus-ops summary { cursor: pointer; color: var(--text); font-weight: 600; font-size: 13px; line-height: 1.6; }
+.nexus-ops details[open] > summary { margin-bottom: 14px; }
+.nexus-ops .notice-box { line-height: 1.7; margin-bottom: 14px; background: var(--bg-secondary); border: 1px solid var(--border); border-left: 3px solid var(--primary); }
+.nexus-ops :is(#nxbackup-ready,#nxrestore-ready,#nxpromotion-ready) { padding: 12px 14px; font-size: 13px; line-height: 1.6; border-radius: var(--radius-sm); background: var(--bg); margin: 14px 0; overflow-wrap: anywhere; }
+.nexus-ops .form-label:has(input[type="checkbox"]) { display: flex; align-items: flex-start; gap: 9px; line-height: 1.6; color: var(--text); margin: 16px 0; }
+.nexus-ops input[type="checkbox"] { flex-shrink: 0; margin-top: 3px; }
+.nexus-ops input[type="file"] { max-width: 100%; padding: 10px; background: var(--bg); border: 1px solid var(--border); border-radius: var(--radius-sm); font: inherit; font-size: 12px; }
+.nexus-ops input::file-selector-button { border: 1px solid var(--border-dark); border-radius: 4px; background: var(--surface); padding: 6px 10px; color: var(--text); margin-right: 8px; cursor: pointer; }
+.nexus-ops :is(#nxbackup-request,#nxpromotion-request) { justify-self: start; align-self: flex-start; margin-top: 8px; }
+.nexus-ops .table-wrap { min-width: 0; max-width: 100%; overflow-x: auto; margin-top: 16px; border: 1px solid var(--border); border-radius: var(--radius-sm); overscroll-behavior-inline: contain; }
+.nexus-ops .data-table { table-layout: fixed; min-width: 760px; width: 100%; }
+.nexus-ops .data-table th,.nexus-ops .data-table td { white-space: normal; overflow-wrap: anywhere; vertical-align: top; line-height: 1.6; }
+.nexus-ops .data-table td[colspan] { padding: 28px 16px; text-align: center; color: var(--muted); }
+.nexus-ops .data-table td .btn { margin: 2px; max-width: 100%; }
+.nexus-ops :is(#nxbackup-error,#nxrestore-error,#nxpromotion-error):not(:empty) { padding: 12px; margin: 12px 0; border: 1px solid var(--red); border-radius: var(--radius-sm); color: var(--red); font-size: 13px; overflow-wrap: anywhere; }
+.nexus-ops pre { max-width: 100%; white-space: pre-wrap; overflow-wrap: anywhere; }
+@media(max-width:800px) {
+  .nexus-ops .form-grid { grid-template-columns: minmax(0,1fr); }
+  .nx-storage-stats { gap: 8px; }
+  .nx-storage-stats > div { padding: 4px 10px; }
+  .nx-storage-stats dd { font-size: 19px; }
+}
+@media(max-width:480px) {
+  .nexus-ops .section-card { padding: 16px; }
+  .nx-task-tab { flex-basis: calc(33.33% - 6px); padding: 10px 4px; font-size: 12px; min-height: 44px; }
+  .nx-storage-stats { grid-template-columns: minmax(0,1fr); gap: 12px; }
+  .nx-storage-stats > div { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; }
+  .nx-storage-stats dt { margin: 0; }
+  .nexus-ops .section-header .btn { min-height: 36px; }
+  .nexus-ops .btn { min-height: 44px; }
+}

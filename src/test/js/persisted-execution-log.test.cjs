@@ -1,0 +1,15 @@
+const test=require('node:test'), assert=require('node:assert/strict'), fs=require('node:fs'),vm=require('node:vm');
+const html=fs.readFileSync('src/main/resources/templates/pages/request-detail.html','utf8');
+const start=html.indexOf('  function loadPersistedExecutionLogs() {');
+const end=html.indexOf('  loadPersistedExecutionLogs();',start);
+const actual=html.slice(start,end);
+function harness(response){let current;const panel={dataset:{requestId:'9'}};const status={textContent:''},text={textContent:''};Object.defineProperty(text,'innerHTML',{set(){throw Error('unsafe HTML insertion')}});current=panel;let calls=0;const c=vm.createContext({document:{getElementById:id=>id==='persisted-execution-log-panel'?current:id==='persisted-execution-log-status'?status:text},fetch:()=>{calls++;return Promise.resolve(typeof response==='function'?response():response)}});vm.runInContext(actual,c);return{panel,status,text,c,replace:p=>current=p,calls:()=>calls,load:()=>c.loadPersistedExecutionLogs()};}
+const ok=data=>({ok:true,json:async()=>({success:true,data})});
+test('terminal reload displays stored literal logs with textContent',async()=>{const h=harness(ok({requestId:9,records:[{serverName:'<img onerror=bad>',success:false,exitCode:1,stdout:'<script>literal</script>',stderr:'error'}]}));await h.load();assert.match(h.text.textContent,/<script>literal/);assert.match(h.status.textContent,/불러왔습니다/);});
+test('empty command history has truthful CI preflight guidance',async()=>{const h=harness(ok({requestId:9,records:[]}));await h.load();assert.match(h.status.textContent,/기록이 없습니다/);});
+test('server error never echoes response secrets',async()=>{const h=harness({ok:false,json:async()=>({message:'PRIVATE_CANARY'})});await h.load();assert.doesNotMatch(h.status.textContent,/PRIVATE_CANARY/);assert.match(h.status.textContent,/권한/);});
+test('late response after SPA navigation cannot update new request',async()=>{let release;const h=harness(()=>new Promise(r=>release=r));const p=h.load();h.replace({dataset:{requestId:'10'}});release(ok({requestId:9,records:[{stdout:'old response'}]}));await p;assert.equal(h.text.textContent,'');});
+test('double clicks do not issue duplicate fetches',async()=>{let release;const h=harness(()=>new Promise(r=>release=r));const p=h.load();h.load();assert.equal(h.calls(),1);release(ok({requestId:9,records:[]}));await p;assert.equal(h.panel.dataset.loading,'false');});
+test('invalid request id does not fetch arbitrary path',()=>{const h=harness(null);h.panel.dataset.requestId='../other';h.load();assert.equal(h.calls(),0);});
+test('wrong response request id refuses instead of leaking unrelated logs',async()=>{const h=harness(ok({requestId:10,records:[{stdout:'UNRELATED'}]}));await h.load();assert.equal(h.text.textContent,'');assert.match(h.status.textContent,/읽지 못했습니다/);});
+test('total output is bounded and truncation explained',async()=>{const h=harness(ok({requestId:9,records:[{stdout:'x'.repeat(300000)}]}));await h.load();assert.equal(h.text.textContent.length,262144);assert.match(h.status.textContent,/한도/);});

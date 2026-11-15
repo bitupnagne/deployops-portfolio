@@ -1,0 +1,769 @@
+<!DOCTYPE html>
+<html xmlns:th="http://www.thymeleaf.org">
+<body>
+<th:block th:fragment="content">
+
+  <div class="page-header">
+    <div>
+      <h1 class="page-title">연동 설정</h1>
+      <p class="page-desc">오피스 시스템 · GitLab · Nexus · 서버 접속 정보를 관리합니다.</p>
+    </div>
+    <div class="page-actions">
+      <button class="btn btn-primary" onclick="saveAll()">전체 저장</button>
+    </div>
+  </div>
+
+  <div class="section-card" style="margin-bottom:20px">
+    <div style="display:flex;align-items:center;gap:12px;margin-bottom:20px">
+      <div style="width:36px;height:36px;border-radius:8px;background:#111827;display:flex;align-items:center;justify-content:center;color:#fff;font-size:13px;font-weight:800">URL</div>
+      <div>
+        <div class="ds-help-title-row"><h3 class="section-title" style="margin:0">시스템 URL / SSO</h3><div class="ds-help" data-ui-help><button class="ds-help-toggle" type="button" data-ui-help-toggle aria-label="URL / SSO 연동 구조 도움말" aria-expanded="false"><svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M11 18h2v-2h-2v2zm1-16C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm0 18c-4.41 0-8-3.59-8-8s3.59-8 8-8 8 3.59 8 8-3.59 8-8 8zm0-14c-2.21 0-4 1.79-4 4h2c0-1.1.9-2 2-2s2 .9 2 2c0 2-3 1.75-3 5h2c0-2.25 3-2.5 3-5 0-2.21-1.79-4-4-4z"></path></svg></button><div class="ds-help-panel" id="system-url-help" data-ui-help-panel hidden aria-label="URL / SSO 연동 구조 도움말"><strong class="ds-help-title">URL / SSO 연동 구조</strong><div class="ds-help-content"><p>Office System과 Deploy System이 서로 호출할 때 사용하는 공개 주소와 SSO 공유키입니다.</p><p>배포 알림을 Office Web과 Windows 앱으로 보낼 때 사용합니다.</p><p>Office System에서 Deploy System SSO 링크를 열 때 사용하는 공개 주소입니다.</p><p>Office System과 Deploy System 내부 SSO/알림 API가 서로를 확인할 때 사용합니다.</p></div><div class="ds-help-foot"><button class="btn btn-primary ds-help-close" type="button" data-ui-help-close>닫기</button></div></div></div></div>
+
+      </div>
+    </div>
+
+    <div class="form-grid">
+      <div class="form-group full">
+        <label class="form-label" for="office-base-url">Office System URL</label>
+        <input class="form-input mono" id="office-base-url" placeholder="http://192.0.2.10:18080">
+
+      </div>
+      <div class="form-group full">
+        <label class="form-label" for="deploy-public-url">Deploy System Public URL</label>
+        <input class="form-input mono" id="deploy-public-url" placeholder="http://192.0.2.10:9090">
+
+      </div>
+      <div class="form-group full">
+        <label class="form-label">SSO 공유 비밀값</label>
+        <div class="field-actions">
+          <input class="form-input mono" id="sso-shared-secret" type="password" placeholder="두 시스템에 동일하게 저장">
+          <button class="btn btn-ghost" style="white-space:nowrap" onclick="togglePassword('sso-shared-secret', this)">표시</button>
+          <button class="btn btn-ghost" type="button" onclick="clearSecret('sso.shared-secret', 'sso-shared-secret')">삭제</button>
+        </div>
+        <p class="form-hint" id="sso-shared-secret-configured">등록 여부 확인 중</p>
+
+      </div>
+      <div class="form-group">
+        <label class="form-label" for="office-test-recipient-id">Office 테스트 수신자 ID</label>
+        <input class="form-input" id="office-test-recipient-id" type="number" min="1" placeholder="선택 입력">
+        <p class="form-hint">비워두면 Office URL만 확인하고, 입력하면 실제 알림을 전송합니다.</p>
+      </div>
+      <div class="form-group">
+        <label class="form-label">연결 상태</label>
+        <div style="display:flex;gap:10px;align-items:center;height:42px">
+          <span id="office-status" class="status-badge" style="font-size:12px">미확인</span>
+          <span id="deploy-public-status" class="status-badge" style="font-size:12px">미확인</span>
+        </div>
+      </div>
+    </div>
+    <div style="margin-top:16px;display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+      <button class="btn btn-ghost" onclick="testConnection('office')">Office 연결 테스트</button>
+      <button class="btn btn-ghost" onclick="testConnection('deploy-public')">Deploy URL 테스트</button>
+      <button class="btn btn-primary" onclick="saveSection('system-url')">저장</button>
+      <span id="system-url-result" style="font-size:13px;color:var(--muted)"></span>
+    </div>
+    <div style="margin-top:8px">
+      <span id="office-result" style="font-size:13px;color:var(--muted)"></span>
+      <span id="deploy-public-result" style="font-size:13px;color:var(--muted);margin-left:14px"></span>
+    </div>
+  </div>
+
+  <div class="section-card" id="office-notification-outbox" style="margin-bottom:20px" aria-busy="false">
+    <h3 class="section-title">Office 알림 전송 기록</h3>
+    <p class="form-hint">실패 알림만 개별 재시도할 수 있습니다. 요청 접수와 실제 전송 상태는 구분됩니다. 전송 처리됨은 사용자의 읽음이나 수신 확인을 뜻하지 않습니다.</p>
+    <p class="form-hint">알림 본문과 오류 원문은 표시하지 않습니다. 원인 조사는 서버의 보호된 로그를 확인해 주세요.</p>
+    <div style="display:flex;gap:16px;flex-wrap:wrap;margin:12px 0" aria-label="전체 알림 상태별 건수">
+      <span>대기 <b data-outbox="count-PENDING">—</b>건</span>
+      <span>전송 중 <b data-outbox="count-SENDING">—</b>건</span>
+      <span>전송 처리됨 <b data-outbox="count-DELIVERED">—</b>건</span>
+      <span>실패 <b data-outbox="count-DEAD_LETTER">—</b>건</span>
+    </div>
+    <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:12px">
+      <label class="form-label" for="office-outbox-filter" style="margin:0">조회 상태</label>
+      <select class="form-select" id="office-outbox-filter" data-outbox="filter" data-no-custom-select style="width:auto">
+        <option value="DEAD_LETTER" selected>실패</option>
+        <option value="PENDING">대기</option>
+        <option value="SENDING">전송 중</option>
+        <option value="DELIVERED">전송 처리됨</option>
+      </select>
+      <button class="btn btn-ghost" type="button" data-outbox="refresh">새로고침</button>
+      <span class="form-hint">페이지당 30건 · 시각은 서버 기록 기준</span>
+    </div>
+    <p class="form-hint" data-outbox="message" role="status" aria-live="polite">알림 전송 기록을 준비하는 중입니다.</p>
+    <div style="overflow-x:auto">
+      <table class="data-table" style="min-width:1000px">
+        <caption class="form-hint" style="text-align:left">선택한 상태의 알림 전송 기록</caption>
+        <thead><tr><th scope="col">알림 ID</th><th scope="col">유형</th><th scope="col">대상 요청</th><th scope="col">상태</th><th scope="col">시도수</th><th scope="col">생성 시각</th><th scope="col">다음 시도</th><th scope="col">전송 처리 시각</th><th scope="col">실패 전환 시각</th><th scope="col">작업</th></tr></thead>
+        <tbody data-outbox="rows"><tr><td colspan="10">조회 대기 중입니다.</td></tr></tbody>
+      </table>
+    </div>
+    <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-top:12px">
+      <button class="btn btn-ghost" type="button" data-outbox="prev" disabled>이전</button>
+      <span class="form-hint" data-outbox="page">조회 대기</span>
+      <button class="btn btn-ghost" type="button" data-outbox="next" disabled>다음</button>
+    </div>
+  </div>
+
+  <div class="section-card" style="margin-bottom:20px">
+    <div style="display:flex;align-items:center;gap:12px;margin-bottom:20px">
+      <div style="width:36px;height:36px;border-radius:8px;background:#fc6d26;display:flex;align-items:center;justify-content:center;color:#fff;font-size:13px;font-weight:800">GL</div>
+      <div>
+        <h3 class="section-title" style="margin:0">GitLab</h3>
+        <p style="font-size:12px;color:var(--muted);margin:2px 0 0">프로젝트, 브랜치, MR, Pipeline 조회와 조작에 사용하는 GitLab 연동 정보입니다.</p>
+      </div>
+      <div style="margin-left:auto">
+        <span id="gitlab-status" class="status-badge" style="font-size:12px">미확인</span>
+      </div>
+    </div>
+
+    <div class="form-grid">
+      <div class="form-group full">
+        <label class="form-label" for="gitlab-url">GitLab URL</label>
+        <input class="form-input mono" id="gitlab-url" placeholder="http://192.0.2.10:8929">
+      </div>
+      <div class="form-group full">
+        <label class="form-label">Bot Token</label>
+        <div class="field-actions">
+          <input class="form-input mono" id="gitlab-token" type="password" placeholder="glpat-...">
+          <button class="btn btn-ghost" style="white-space:nowrap" onclick="togglePassword('gitlab-token', this)">표시</button>
+          <button class="btn btn-ghost" type="button" onclick="clearSecret('gitlab.token', 'gitlab-token')">삭제</button>
+        </div>
+        <p class="form-hint" id="gitlab-token-configured">등록 여부 확인 중</p>
+        <p class="form-hint">Deploy System 전용 서비스 계정 토큰을 사용합니다. root/admin PAT는 사용하지 않습니다.</p>
+      </div>
+      <div class="form-group">
+        <label class="form-label" for="gitlab-api-version">API 버전</label>
+        <select class="form-select" id="gitlab-api-version">
+          <option value="v4" selected>v4</option>
+        </select>
+      </div>
+      <div class="form-group">
+        <label class="form-label" for="gitlab-timeout">연결 타임아웃(초)</label>
+        <input class="form-input" id="gitlab-timeout" type="number" value="10" min="1" max="60">
+      </div>
+      <div class="form-group full">
+        <label class="form-label">웹훅 비밀값</label>
+        <div class="field-actions">
+          <input class="form-input mono" id="gitlab-webhook-secret" type="password" placeholder="GitLab Webhook의 Secret token과 동일하게 저장">
+          <button class="btn btn-ghost" style="white-space:nowrap" onclick="togglePassword('gitlab-webhook-secret', this)">표시</button>
+          <button class="btn btn-ghost" type="button" onclick="clearSecret('gitlab.webhook.secret', 'gitlab-webhook-secret')">삭제</button>
+        </div>
+        <p class="form-hint" id="gitlab-webhook-secret-configured">등록 여부 확인 중</p>
+        <p class="form-hint">GitLab 프로젝트 Webhook(URL: <code>/api/v1/gitlab/webhook</code>, Merge request events)의 Secret token과 동일한 값. 미등록 GitLab 사용자의 MR을 자동 종료할 때 사용합니다.</p>
+      </div>
+      <div class="form-group full">
+        <label class="form-label" for="gitlab-systoken-allowed">시스템 토큰 승격 허용 사용자</label>
+        <input class="form-input mono" id="gitlab-systoken-allowed" placeholder="로그인 ID 를 쉼표로 (예: hong, kim) — 비우면 최고 관리자만">
+        <p class="form-hint">
+          본인 GitLab 토큰이 없는 사람에게 <b>시스템 공용 토큰</b>을 대신 쓰게 허용할 목록입니다.
+          최고 관리자는 적지 않아도 항상 허용됩니다.
+          공용 토큰은 누가 했는지 구분되지 않으므로 꼭 필요한 사람만 적으세요.
+        </p>
+      </div>
+    </div>
+    <div class="field-actions" style="margin-top:16px">
+      <button class="btn btn-ghost" onclick="testConnection('gitlab')">연결 테스트</button>
+      <button class="btn btn-primary" onclick="saveSection('gitlab')">저장</button>
+      <span id="gitlab-result" style="font-size:13px;color:var(--muted)"></span>
+    </div>
+  </div>
+
+  <div class="section-card" style="margin-bottom:20px">
+    <div style="display:flex;align-items:center;gap:12px;margin-bottom:20px">
+      <div style="width:36px;height:36px;border-radius:8px;background:#1b74e4;display:flex;align-items:center;justify-content:center;color:#fff;font-size:13px;font-weight:800">NX</div>
+      <div>
+        <h3 class="section-title" style="margin:0">Nexus 저장소</h3>
+              <p style="font-size:12px;color:var(--muted);margin:2px 0 0">Nexus 관리 API와 Docker Registry v2 연결을 확인합니다. 실제 CI push 및 저장소 권한은 파이프라인에서 별도로 검증해야 합니다.</p>
+      </div>
+      <div style="margin-left:auto">
+        <span id="nexus-status" class="status-badge" style="font-size:12px">미검사</span>
+      </div>
+    </div>
+
+    <div class="form-grid">
+      <div class="form-group full">
+        <label class="form-label" for="nexus-url">Nexus 관리 API URL</label>
+        <input class="form-input mono" id="nexus-url" placeholder="http://192.0.2.10:8081">
+        <p class="form-hint">DeployOps에서 저장소 조회·파일 반입·관리 API에 접근할 주소입니다.</p>
+      </div>
+      <div class="form-group full">
+        <label class="form-label" for="nexus-maven-base-url">Runner Maven URL (선택)</label>
+        <input class="form-input mono" id="nexus-maven-base-url" placeholder="http://nexus.internal:8081">
+        <p class="form-hint">Runner가 접근할 Nexus 기본 주소입니다. /repository/저장소명은 넣지 않습니다. 비우면 관리 API URL을 사용합니다. API·Registry 연결 검사로 Runner 연결까지 확인되지는 않습니다. 변경 후 프로젝트 Maven 설정을 다시 미리보기·적용하고 CI에서 확인하세요.</p>
+      </div>
+      <div class="form-group">
+        <label class="form-label" for="nexus-user">사용자명</label>
+        <input class="form-input" id="nexus-user" placeholder="deploy-system-ci">
+      </div>
+      <div class="form-group">
+        <label class="form-label">비밀번호 / Token</label>
+        <div class="field-actions">
+          <input class="form-input" id="nexus-pass" type="password" placeholder="비밀번호 또는 토큰">
+          <button class="btn btn-ghost" style="white-space:nowrap" onclick="togglePassword('nexus-pass', this)">표시</button>
+          <button class="btn btn-ghost" type="button" onclick="clearSecret('nexus.pass', 'nexus-pass')">삭제</button>
+        </div>
+        <p class="form-hint" id="nexus-pass-configured">등록 여부 확인 중</p>
+      </div>
+      <div class="form-group full">
+        <label class="form-label" for="nexus-registry">Docker Registry 주소</label>
+        <input class="form-input mono" id="nexus-registry" placeholder="192.0.2.10:5000">
+        <p class="form-hint">CI와 배포 서버가 사용할 Registry 주소입니다. scheme은 Nexus URL과 같습니다.</p>
+      </div>
+      <div class="form-group full">
+        <label class="form-label" for="nexus-registry-api-url">DeployOps 내부 Registry 주소 (선택)</label>
+        <input class="form-input mono" id="nexus-registry-api-url" placeholder="nexus:15000">
+        <p class="form-hint">DeployOps 컨테이너에서 Registry 검사와 이미지 이력 조회에 사용할 호스트:포트입니다. 비우면 위 주소를 사용합니다.</p>
+      </div>
+    </div>
+    <div class="field-actions" style="margin-top:16px">
+      <button class="btn btn-ghost" onclick="testConnection('nexus')">API·Registry 연결 테스트</button>
+      <button class="btn btn-ghost" onclick="loadNexusStorage()">저장공간 조회</button>
+      <button class="btn btn-primary" onclick="saveSection('nexus')">저장</button>
+      <span id="nexus-result" style="font-size:13px;color:var(--muted)"></span>
+    </div>
+    <p class="form-hint">Nexus 검사 결과는 이 페이지의 현재 입력 기준입니다. 새로고침, 입력 변경 또는 저장 후에는 다시 검사해 주세요. 저장은 연결 검사와 별개입니다.</p>
+    <div id="nexus-storage-result" class="notice-box" style="display:none;margin-top:12px;flex-direction:column;align-items:stretch;min-width:0;overflow-wrap:anywhere"></div>
+    <div style="margin-top:20px;padding-top:18px;border-top:1px solid var(--line)">
+      <h4 style="margin:0 0 6px">이미지 정리 승인</h4>
+      <p class="form-hint">태그의 현재 digest를 고정해 요청하고 다른 관리자가 승인합니다. 현재 배포 및 최근 복구 이력 20건의 digest는 삭제할 수 없습니다.</p>
+      <div class="form-grid" style="margin-top:12px">
+        <div class="form-group">
+          <label class="form-label" for="nexus-cleanup-project">프로젝트</label>
+          <select class="form-select" id="nexus-cleanup-project">
+            <option value="">선택</option>
+            <option th:each="project : ${projects}" th:value="${project.id}" th:text="${project.name + ' (#' + project.id + ')'}">프로젝트</option>
+          </select>
+        </div>
+        <div class="form-group">
+          <label class="form-label" for="nexus-cleanup-tag">삭제할 이미지 태그</label>
+          <input class="form-input mono" id="nexus-cleanup-tag" maxlength="255" placeholder="main-1a2b3c4-123">
+        </div>
+        <div class="form-group full">
+          <label class="form-label" for="nexus-cleanup-reason">정리 사유</label>
+          <input class="form-input" id="nexus-cleanup-reason" maxlength="1000" placeholder="보존기간 경과 및 미사용 확인">
+        </div>
+      </div>
+      <div style="display:flex;gap:8px;margin:10px 0 12px">
+        <button class="btn btn-primary" type="button" onclick="requestNexusCleanup()">정리 승인 요청</button>
+        <button class="btn btn-ghost" type="button" onclick="loadNexusCleanupRequests()">요청 새로고침</button>
+      </div>
+      <div class="table-wrap">
+        <table class="data-table">
+          <thead><tr><th scope="col">프로젝트</th><th scope="col">태그 / digest</th><th scope="col">사유</th><th scope="col">요청자 / 상태</th><th scope="col">작업</th></tr></thead>
+          <tbody id="nexus-cleanup-body"><tr><td colspan="5" style="text-align:center">불러오는 중…</td></tr></tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <div class="section-card" style="margin-bottom:20px">
+    <h3 class="section-title">서버 에이전트</h3>
+    <p>서버 화면에서 에이전트를 등록·승인하고 연결과 실행 준비 상태를 확인하세요.</p>
+    <button class="btn btn-primary" onclick="navigate('servers')">서버 관리 열기</button>
+  </div>
+  <div class="section-card" style="margin-bottom:20px">
+    <div style="display:flex;align-items:center;gap:12px;margin-bottom:20px">
+      <div style="width:36px;height:36px;border-radius:8px;background:#b45309;display:flex;align-items:center;justify-content:center;color:#fff;font-size:12px;font-weight:800">ART</div>
+      <div>
+        <h3 class="section-title" style="margin:0">산출물 전달</h3>
+        <p style="font-size:12px;color:var(--muted);margin:2px 0 0">빌드 결과물을 배포 대상 서버로 어떻게 넘길지 정합니다. <b>망분리 구성에서는 반드시 확인해야 합니다.</b></p>
+      </div>
+    </div>
+
+    <div class="form-grid">
+      <div class="form-group full">
+        <label class="form-label" for="deploy-image-transfer">전달 방식</label>
+        <select class="form-input" id="deploy-image-transfer">
+          <option value="push">밀어 넣기(push) — 대상 서버가 저장소에 접속하지 못하는 망분리 구성</option>
+          <option value="registry">직접 받기(registry) — 대상 서버가 저장소에 접속 가능한 단일망 구성</option>
+        </select>
+        <p style="font-size:12px;color:var(--muted);margin:6px 0 0">
+          망분리(개발망·배포망·운영망) 구성이면 <b>밀어 넣기</b>입니다.
+          직접 받기로 두면 대상 서버가 저장소에 접속하려다 실패합니다.
+        </p>
+      </div>
+
+      <div class="form-group">
+        <label class="form-label" for="deploy-container-memory">컨테이너 메모리 상한</label>
+        <input class="form-input mono" id="deploy-container-memory" value="2g" placeholder="2g">
+        <p style="font-size:12px;color:var(--muted);margin:6px 0 0">
+          예: <code>2g</code>, <code>1536m</code>. <b>비우면 위험합니다</b> —
+          상한이 없으면 앱이 서버 전체 메모리를 기준으로 동작해, 한 서비스가 노드 전체를 멈출 수 있습니다.
+        </p>
+      </div>
+
+      <div class="form-group">
+        <label class="form-label" for="deploy-image-staging-dir">대상 서버 임시 경로</label>
+        <input class="form-input mono" id="deploy-image-staging-dir" value="/var/tmp/deploy-ops" placeholder="/var/tmp/deploy-ops">
+        <p style="font-size:12px;color:var(--muted);margin:6px 0 0">전송한 파일을 잠시 두는 곳. 배포가 끝나면 자동으로 지웁니다.</p>
+      </div>
+
+      <div class="form-group full">
+        <label class="form-label" for="deploy-static-image-path">정적 산출물 경로 (이미지 내부)</label>
+        <input class="form-input mono" id="deploy-static-image-path" value="/dist" placeholder="/dist">
+        <p style="font-size:12px;color:var(--muted);margin:6px 0 0">
+          웹 화면 빌드 결과가 이미지 안 어디에 있는지. 프론트엔드 빌드는 보통 <code>/dist</code> 입니다.
+        </p>
+      </div>
+    </div>
+    <div class="field-actions" style="margin-top:16px">
+      <button class="btn btn-primary" onclick="saveSection('deploy-artifact')">저장</button>
+      <span id="deploy-artifact-result" style="font-size:13px;color:var(--muted)"></span>
+    </div>
+  </div>
+
+  <div class="section-card" style="margin-bottom:20px">
+    <div style="display:flex;align-items:center;gap:12px;margin-bottom:20px">
+      <div style="width:36px;height:36px;border-radius:8px;background:#7c3aed;display:flex;align-items:center;justify-content:center;color:#fff;font-size:13px;font-weight:800">SEC</div>
+      <div>
+        <div class="ds-help-title-row"><h3 class="section-title" style="margin:0">Secret 암호화 / Rotation</h3><div class="ds-help" data-ui-help><button class="ds-help-toggle" type="button" data-ui-help-toggle aria-label="Secret 암호화 대상 도움말" aria-expanded="false"><svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M11 18h2v-2h-2v2zm1-16C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm0 18c-4.41 0-8-3.59-8-8s3.59-8 8-8 8 3.59 8 8-3.59 8-8 8zm0-14c-2.21 0-4 1.79-4 4h2c0-1.1.9-2 2-2s2 .9 2 2c0 2-3 1.75-3 5h2c0-2.25 3-2.5 3-5 0-2.21-1.79-4-4-4z"></path></svg></button><div class="ds-help-panel" id="secret-storage-help" data-ui-help-panel hidden aria-label="Secret 암호화 대상 도움말"><strong class="ds-help-title">Secret 암호화 대상</strong><div class="ds-help-content"><p>GitLab token, Nexus password, SSO shared secret, 사용자 GitLab token의 저장 암호화 상태를 확인합니다.</p></div><div class="ds-help-foot"><button class="btn btn-primary ds-help-close" type="button" data-ui-help-close>닫기</button></div></div></div></div>
+
+      </div>
+    </div>
+    <div class="form-grid">
+      <div class="form-group">
+        <label class="form-label">평문 민감정보</label>
+        <div id="secret-plain-status" style="font-size:13px;color:var(--muted);line-height:1.5">확인 전</div>
+      </div>
+      <div class="form-group">
+        <label class="form-label">키 Rotation 대상</label>
+        <div id="secret-rotation-status" style="font-size:13px;color:var(--muted);line-height:1.5">확인 전</div>
+      </div>
+    </div>
+    <div style="margin-top:16px;display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+      <button class="btn btn-ghost" onclick="loadSecretStatus()">상태 확인</button>
+      <button class="btn btn-ghost" onclick="migratePlainSecrets()">평문 암호화</button>
+      <button class="btn btn-primary" onclick="rotateSecretKey()">현재 키로 재암호화</button>
+      <span id="secret-result" style="font-size:13px;color:var(--muted)"></span>
+    </div>
+  </div>
+
+  <script>
+  var _csrf = document.querySelector('meta[name="_csrf"]').content;
+  var _csrfHeader = document.querySelector('meta[name="_csrf_header"]').content;
+
+  /* togglePassword 는 app.js 공통 함수 사용 */
+
+  var nexusConnectionState = {
+    generation: 0,
+    fields: ['nexus-url', 'nexus-user', 'nexus-pass', 'nexus-registry', 'nexus-registry-api-url', 'nexus-maven-base-url']
+      .map(id => document.getElementById(id)),
+    status: document.getElementById('nexus-status'),
+    result: document.getElementById('nexus-result')
+  };
+
+  function nexusContextCurrent(state) {
+    return state === nexusConnectionState && state.status.isConnected && state.result.isConnected
+      && document.getElementById('nexus-status') === state.status
+      && document.getElementById('nexus-result') === state.result
+      && state.fields.every(field => field.isConnected && document.getElementById(field.id) === field);
+  }
+
+  function invalidateNexusConnection(state) {
+    if (!nexusContextCurrent(state)) return;
+    state.generation++;
+    state.status.className = 'status-badge';
+    state.status.textContent = '미검사';
+    state.result.style.color = 'var(--muted)';
+    state.result.textContent = '';
+  }
+
+  function nexusTestBody() {
+    return {url: valueOf('nexus-url'), user: valueOf('nexus-user'), pass: valueOf('nexus-pass'),
+      registry: valueOf('nexus-registry'), registryApiUrl: valueOf('nexus-registry-api-url')};
+  }
+
+  nexusConnectionState.fields.forEach(field => {
+    const state = nexusConnectionState;
+    field.addEventListener('input', () => invalidateNexusConnection(state));
+    field.addEventListener('change', () => invalidateNexusConnection(state));
+  });
+
+  function testConnection(type) {
+    const resultEl = document.getElementById(type + '-result');
+    const statusEl = document.getElementById(type + '-status');
+    const nexusState = type === 'nexus' ? nexusConnectionState : null;
+    const generation = nexusState ? ++nexusState.generation : 0;
+    if (nexusState) {
+      statusEl.className = 'status-badge';
+      statusEl.textContent = '검사 중';
+    }
+    resultEl.style.color = 'var(--muted)';
+    resultEl.textContent = '검사 중...';
+
+    const body = {};
+    if (type === 'office') {
+      body.url = valueOf('office-base-url');
+      body.secret = valueOf('sso-shared-secret');
+      body.recipientOfficeUserId = valueOf('office-test-recipient-id');
+    } else if (type === 'deploy-public') {
+      body.url = valueOf('deploy-public-url');
+    } else if (type === 'gitlab') {
+      body.url = valueOf('gitlab-url');
+      body.token = valueOf('gitlab-token');
+    } else if (type === 'nexus') {
+      Object.assign(body, nexusTestBody());
+    }
+
+    const snapshot = nexusState ? JSON.stringify(body) : null;
+    const canPublish = () => !nexusState || (nexusState.generation === generation
+      && nexusContextCurrent(nexusState)
+      && JSON.stringify(nexusTestBody()) === snapshot);
+
+    const request = fetch(`/api/v1/integration/test/${type}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', [_csrfHeader]: _csrf },
+      body: JSON.stringify(body)
+    })
+      .then(r => r.json())
+      .then(data => {
+        if (!canPublish()) return;
+        if (data.success) {
+          resultEl.style.color = 'var(--green)';
+          resultEl.textContent = '정상: ' + (data.message || data.data || '검사 성공');
+          if (statusEl) {
+            statusEl.className = 'status-badge completed';
+            statusEl.textContent = '정상';
+          }
+        } else {
+          resultEl.style.color = 'var(--red)';
+          resultEl.textContent = '실패: ' + (data.message || data.data || '검사 실패');
+          if (statusEl) {
+            statusEl.className = 'status-badge failed';
+            statusEl.textContent = '오류';
+          }
+        }
+      })
+      .catch(() => {
+        if (!canPublish()) return;
+        resultEl.style.color = 'var(--red)';
+        resultEl.textContent = '요청 실패';
+        if (nexusState) {
+          statusEl.className = 'status-badge failed';
+          statusEl.textContent = '오류';
+        }
+      });
+    if (nexusState) return request;
+  }
+
+  (function (nexusState) {
+  fetch('/api/v1/settings/integration')
+    .then(r => r.json())
+    .then(res => {
+      const data = res.data || {};
+      setValue('office-base-url', data['office.base-url']);
+      setValue('deploy-public-url', data['deploy.public-url']);
+      setSecretStatus('sso-shared-secret', !!(data.configuredSecrets || {})['sso.shared-secret']);
+      setValue('gitlab-url', data['gitlab.url']);
+      setSecretStatus('gitlab-token', !!(data.configuredSecrets || {})['gitlab.token']);
+      setValue('gitlab-api-version', data['gitlab.api-version']);
+      setValue('gitlab-timeout', data['gitlab.timeout-sec']);
+      setSecretStatus('gitlab-webhook-secret', !!(data.configuredSecrets || {})['gitlab.webhook.secret']);
+      setValue('gitlab-systoken-allowed', data['gitlab.system-token.allowed-users']);
+      if (nexusContextCurrent(nexusState)) {
+        invalidateNexusConnection(nexusState);
+        setValue('nexus-url', data['nexus.url']);
+        setValue('nexus-maven-base-url', data['nexus.maven.base-url']);
+        setValue('nexus-user', data['nexus.user']);
+        setSecretStatus('nexus-pass', !!(data.configuredSecrets || {})['nexus.pass']);
+        setValue('nexus-registry', data['nexus.registry']);
+        setValue('nexus-registry-api-url', data['nexus.registry.api-url']);
+      }
+      setValue('deploy-image-transfer', data['deploy.image.transfer'] || 'registry');
+      setValue('deploy-container-memory', data['deploy.container.memory'] || '2g');
+      setValue('deploy-image-staging-dir', data['deploy.image.staging-dir'] || '/var/tmp/deploy-ops');
+      setValue('deploy-static-image-path', data['deploy.static.image-path'] || '/dist');
+    });
+  }(nexusConnectionState));
+
+  function setValue(id, value) {
+    if (value !== undefined && value !== null && value !== '') {
+      const field = document.getElementById(id);
+      field.value = value;
+      if (field.tagName === 'SELECT' && typeof window !== 'undefined' && window.DeploySelect) {
+        window.DeploySelect.sync(field);
+      }
+    }
+  }
+
+  var secretFields = {
+    'sso.shared-secret': 'sso-shared-secret',
+    'gitlab.token': 'gitlab-token',
+    'gitlab.webhook.secret': 'gitlab-webhook-secret',
+    'nexus.pass': 'nexus-pass'
+  };
+
+  function setSecretStatus(id, configured) {
+    document.getElementById(id + '-configured').textContent = configured
+      ? '등록됨 · 비워 두면 기존 값 유지'
+      : '미등록 · 새 값을 입력해 주세요';
+  }
+
+  function clearSecret(key, id) {
+    const nexusState = key === 'nexus.pass' ? nexusConnectionState : null;
+    if (nexusState) invalidateNexusConnection(nexusState);
+    return fetch('/api/v1/settings/integration', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', [_csrfHeader]: _csrf },
+      body: JSON.stringify({ [key]: null })
+    }).then(r => r.json()).then(data => {
+      if (!data.success) throw new Error('삭제 실패');
+      if (nexusState && !nexusContextCurrent(nexusState)) return;
+      if (nexusState) invalidateNexusConnection(nexusState);
+      document.getElementById(id).value = '';
+      setSecretStatus(id, false);
+      showToast('비밀값이 삭제되었습니다.', 'success');
+    }).catch(() => {
+      if (!nexusState || nexusContextCurrent(nexusState)) showToast('비밀값 삭제에 실패했습니다.', 'error');
+    });
+  }
+
+  function saveSection(type) {
+    const nexusState = type === 'nexus' ? nexusConnectionState : null;
+    if (nexusState) invalidateNexusConnection(nexusState);
+    const values = {};
+    if (type === 'system-url') {
+      values['office.base-url'] = valueOf('office-base-url');
+      values['deploy.public-url'] = valueOf('deploy-public-url');
+      values['sso.shared-secret'] = valueOf('sso-shared-secret');
+    } else if (type === 'gitlab') {
+      values['gitlab.url'] = valueOf('gitlab-url');
+      values['gitlab.token'] = valueOf('gitlab-token');
+      values['gitlab.api-version'] = valueOf('gitlab-api-version');
+      values['gitlab.timeout-sec'] = valueOf('gitlab-timeout');
+      values['gitlab.webhook.secret'] = valueOf('gitlab-webhook-secret');
+      values['gitlab.system-token.allowed-users'] = valueOf('gitlab-systoken-allowed');
+    } else if (type === 'nexus') {
+      values['nexus.url'] = valueOf('nexus-url');
+      values['nexus.maven.base-url'] = valueOf('nexus-maven-base-url');
+      values['nexus.user'] = valueOf('nexus-user');
+      values['nexus.pass'] = valueOf('nexus-pass');
+      values['nexus.registry'] = valueOf('nexus-registry');
+      values['nexus.registry.api-url'] = valueOf('nexus-registry-api-url');
+    } else if (type === 'deploy-artifact') {
+      values['deploy.image.transfer'] = valueOf('deploy-image-transfer');
+      values['deploy.container.memory'] = valueOf('deploy-container-memory');
+      values['deploy.image.staging-dir'] = valueOf('deploy-image-staging-dir');
+      values['deploy.static.image-path'] = valueOf('deploy-static-image-path');
+    }
+
+    return fetch('/api/v1/settings/integration', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', [_csrfHeader]: _csrf },
+      body: JSON.stringify(values)
+    })
+      .then(r => r.json())
+      .then(data => {
+        if (!data.success) throw new Error('저장 실패');
+        if (nexusState && !nexusContextCurrent(nexusState)) return;
+        if (nexusState) invalidateNexusConnection(nexusState);
+        Object.entries(secretFields).forEach(([key, id]) => {
+          if (values[key]) {
+            document.getElementById(id).value = '';
+            setSecretStatus(id, true);
+          }
+        });
+        const resultEl = document.getElementById(type + '-result');
+        if (resultEl) {
+          resultEl.style.color = 'var(--green)';
+          resultEl.textContent = type === 'nexus' ? '저장되었습니다. 연결 테스트를 다시 실행해 주세요.' : '저장되었습니다.';
+        }
+        showToast(data.message || '설정이 저장되었습니다.', 'success');
+      })
+      .catch(error => {
+        if (!nexusState || nexusContextCurrent(nexusState)) showToast('저장에 실패했습니다.', 'error');
+        throw error;
+      });
+  }
+
+  function valueOf(id) {
+    const el = document.getElementById(id);
+    return el ? el.value.trim() : '';
+  }
+
+  function saveAll() {
+    Promise.all(['system-url', 'gitlab', 'nexus', 'deploy-artifact'].map(saveSection))
+      .then(() => showToast('모든 연동 설정이 저장되었습니다.', 'success'))
+      .catch(() => {});
+  }
+
+  function formatBytes(value) {
+    const n = Number(value);
+    if (!Number.isFinite(n) || n < 0) return '확인 불가';
+    const units = ['B','KiB','MiB','GiB','TiB'];
+    let size = n, index = 0;
+    while (size >= 1024 && index < units.length - 1) { size /= 1024; index++; }
+    return `${size.toFixed(index === 0 ? 0 : 2)} ${units[index]}`;
+  }
+
+  function loadNexusStorage() {
+    const box = document.getElementById('nexus-storage-result');
+    box.style.display = ''; box.textContent = 'Nexus blob 저장공간 조회 중…';
+    fetch('/api/v1/nexus/storage').then(r => r.json()).then(res => {
+      if (!res.success) { box.textContent = res.message || '저장공간을 조회하지 못했습니다.'; return; }
+      const d = res.data || {}, stores = d.stores || [];
+      box.replaceChildren();
+      const summary = document.createElement('div');
+      summary.textContent = `Blob 사용량 ${formatBytes(d.totalSizeInBytes)} · 파일시스템 여유 ${formatBytes(d.availableSpaceInBytes)} · blob ${Number(d.blobCount) || 0}개`;
+      box.appendChild(summary);
+      if (stores.length) {
+        const list = document.createElement('ul');
+        stores.forEach(store => {
+          const li = document.createElement('li');
+          li.textContent = `${store.name || '-'}: ${formatBytes(store.totalSizeInBytes)} / 여유 ${formatBytes(store.availableSpaceInBytes)}`;
+          list.appendChild(li);
+        });
+        box.appendChild(list);
+      }
+      const note = document.createElement('p');
+      note.className = 'form-hint';
+      note.textContent = '여유 공간은 blobstore가 놓인 파일시스템 값이며, 비율은 서버 전체 디스크 사용률이 아닙니다.';
+      box.appendChild(note);
+    }).catch(() => { box.textContent = 'Nexus 저장공간 조회에 실패했습니다.'; });
+  }
+
+  function nexusCleanupResult(response) {
+    return response.json().then(body => {
+      if (!response.ok || !body.success) throw new Error(body.message || 'Nexus 정리 요청 처리에 실패했습니다.');
+      return body;
+    });
+  }
+
+  function requestNexusCleanup() {
+    const projectId = Number(valueOf('nexus-cleanup-project'));
+    const tag = valueOf('nexus-cleanup-tag');
+    const reason = valueOf('nexus-cleanup-reason');
+    if (!projectId || !tag || !reason) { showToast('프로젝트, 이미지 태그와 정리 사유를 모두 입력하세요.', 'error'); return; }
+    fetch('/api/v1/nexus/cleanup-requests', {
+      method: 'POST',
+      headers: {'Content-Type':'application/json', [_csrfHeader]:_csrf},
+      body: JSON.stringify({projectId, tag, reason})
+    }).then(nexusCleanupResult).then(result => {
+      showToast(result.message, 'success');
+      document.getElementById('nexus-cleanup-tag').value = '';
+      document.getElementById('nexus-cleanup-reason').value = '';
+      loadNexusCleanupRequests();
+    }).catch(error => showToast(error.message, 'error'));
+  }
+
+  function loadNexusCleanupRequests() {
+    const body = document.getElementById('nexus-cleanup-body');
+    if (!body) return;
+    fetch('/api/v1/nexus/cleanup-requests').then(nexusCleanupResult).then(result => {
+      const rows = result.data || [];
+      body.replaceChildren();
+      if (!rows.length) {
+        const tr = document.createElement('tr'), td = document.createElement('td');
+        td.colSpan = 5; td.style.textAlign = 'center'; td.textContent = '정리 요청이 없습니다.';
+        tr.appendChild(td); body.appendChild(tr); return;
+      }
+      rows.forEach(row => {
+        const tr = document.createElement('tr');
+        const values = [row.projectName || `#${row.projectId}`, `${row.tag}\n${row.digest}`, row.reason,
+          `${row.requestedBy || '-'} / ${row.statusLabel || row.status}`];
+        values.forEach((value, index) => {
+          const td = document.createElement('td');
+          td.textContent = value == null ? '' : String(value);
+          if (index === 1) { td.className = 'mono'; td.style.whiteSpace = 'pre-line'; }
+          tr.appendChild(td);
+        });
+        const action = document.createElement('td');
+        if (row.status === 'PENDING') {
+          const approve = document.createElement('button');
+          approve.type = 'button'; approve.className = 'btn btn-primary sm'; approve.textContent = '승인·삭제';
+          approve.addEventListener('click', () => approveNexusCleanup(row.id));
+          const reject = document.createElement('button');
+          reject.type = 'button'; reject.className = 'btn btn-ghost sm'; reject.textContent = '반려';
+          reject.addEventListener('click', () => rejectNexusCleanup(row.id));
+          action.append(approve, document.createTextNode(' '), reject);
+        } else {
+          action.textContent = row.resultMessage || '-';
+        }
+        tr.appendChild(action); body.appendChild(tr);
+      });
+    }).catch(error => { body.replaceChildren(); const tr=document.createElement('tr'), td=document.createElement('td'); td.colSpan=5; td.textContent=error.message; tr.appendChild(td); body.appendChild(tr); });
+  }
+
+  function approveNexusCleanup(id) {
+    openConfirm('Nexus 이미지 정리 승인', '현재 태그의 digest와 보호 이력을 다시 확인한 뒤 manifest를 삭제합니다.', () => {
+      fetch(`/api/v1/nexus/cleanup-requests/${id}/approve`, {method:'POST', headers:{[_csrfHeader]:_csrf}})
+        .then(nexusCleanupResult).then(result => { showToast(result.message, 'success'); loadNexusCleanupRequests(); })
+        .catch(error => showToast(error.message, 'error'));
+    });
+  }
+
+  function rejectNexusCleanup(id) {
+    const reason = window.prompt('반려 사유를 입력하세요.');
+    if (!reason || !reason.trim()) return;
+    fetch(`/api/v1/nexus/cleanup-requests/${id}/reject`, {
+      method:'POST', headers:{'Content-Type':'application/json', [_csrfHeader]:_csrf},
+      body:JSON.stringify({reason:reason.trim()})
+    }).then(nexusCleanupResult).then(result => { showToast(result.message, 'success'); loadNexusCleanupRequests(); })
+      .catch(error => showToast(error.message, 'error'));
+  }
+
+  function loadSecretStatus() {
+    const plainEl = document.getElementById('secret-plain-status');
+    const rotationEl = document.getElementById('secret-rotation-status');
+    const resultEl = document.getElementById('secret-result');
+    plainEl.textContent = '확인 중...';
+    rotationEl.textContent = '확인 중...';
+    resultEl.textContent = '';
+    Promise.all([
+      fetch('/api/v1/settings/secrets/plain-status').then(r => r.json()),
+      fetch('/api/v1/settings/secrets/rotation-status').then(r => r.json())
+    ]).then(([plain, rotation]) => {
+      const p = plain.data || {};
+      const r = rotation.data || {};
+      plainEl.textContent = `설정 ${p.plainSettingCount || 0}건, 사용자 토큰 ${p.plainUserGitlabTokenCount || 0}건`;
+      rotationEl.textContent = `설정 ${r.rotationSettingCount || 0}건, 사용자 토큰 ${r.rotationUserGitlabTokenCount || 0}건, currentKey=${r.currentKeyId || '-'}`;
+      resultEl.style.color = 'var(--green)';
+        resultEl.textContent = '';
+    }).catch(() => {
+      resultEl.style.color = 'var(--red)';
+      resultEl.textContent = 'Secret 상태 확인에 실패했습니다.';
+    });
+  }
+
+  function migratePlainSecrets() {
+    runSecretAction('/api/v1/settings/secrets/migrate-plain');
+  }
+
+  function rotateSecretKey() {
+    runSecretAction('/api/v1/settings/secrets/rotate-key');
+  }
+
+  function runSecretAction(url) {
+    const resultEl = document.getElementById('secret-result');
+    resultEl.style.color = 'var(--muted)';
+    resultEl.textContent = '처리 중...';
+    fetch(url, {
+      method: 'POST',
+      headers: { [_csrfHeader]: _csrf }
+    })
+      .then(r => r.json())
+      .then(data => {
+        resultEl.style.color = data.success ? 'var(--green)' : 'var(--red)';
+        resultEl.textContent = data.message || (data.success ? '완료되었습니다.' : '실패했습니다.');
+        loadSecretStatus();
+      })
+      .catch(() => {
+        resultEl.style.color = 'var(--red)';
+        resultEl.textContent = '요청에 실패했습니다.';
+      });
+  }
+
+  loadSecretStatus();
+  loadNexusCleanupRequests();
+  (function () {
+    function initOfficeOutbox() {
+      if (typeof OfficeNotificationOutbox !== 'undefined') OfficeNotificationOutbox.init();
+    }
+    if (typeof OfficeNotificationOutbox !== 'undefined') initOfficeOutbox();
+    else if (typeof window !== 'undefined') window.addEventListener('DOMContentLoaded', initOfficeOutbox, { once: true });
+  }());
+  </script>
+
+</th:block>
+</body>
+</html>

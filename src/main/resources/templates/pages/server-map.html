@@ -1,0 +1,901 @@
+<!DOCTYPE html>
+<html xmlns:th="http://www.thymeleaf.org" xmlns:sec="http://www.thymeleaf.org/extras/spring-security">
+<body>
+
+<th:block th:fragment="content">
+
+  <div class="page-header">
+    <div>
+      <h1 class="page-title">서버 구조 · 제어</h1>
+      <p class="page-desc">소스에서 대상 서버까지의 흐름을 보고, 그 자리에서 서비스를 정지/기동합니다.</p>
+    </div>
+    <div class="page-actions">
+      <button class="btn btn-ghost" type="button" onclick="smRefresh()">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" aria-hidden="true"><path d="M21 12a9 9 0 1 1-3-6.7"/><polyline points="21 3 21 9 15 9"/></svg>
+        새로고침
+      </button>
+    </div>
+  </div>
+
+  <div class="page-help" style="margin-bottom:14px;background:var(--surface);color:var(--text);border:1px solid var(--primary)">
+    <div>
+      정지/기동은 <b>이미 배포된 컨테이너를 껐다 켜는 것</b>이라 버전이 바뀌지 않고, 그래서 승인 절차가 없습니다.
+      다만 그 환경의 <b>실행 권한</b>이 필요하고 모든 조작은 감사 로그에 남습니다.
+    </div>
+  </div>
+
+  <div id="sm-banner" class="sm-banner" style="display:none" role="status" aria-live="polite"></div>
+
+  <div class="section-card" style="margin-bottom:14px">
+    <div class="ds-help-summary" style="margin-bottom:12px"><strong>프로젝트 구조 조회</strong><div class="ds-help" data-ui-help><button class="ds-help-toggle" type="button" data-ui-help-toggle aria-label="서버 구조와 연결 상태 범례" aria-expanded="false"><svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M11 18h2v-2h-2v2zm1-16C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm0 18c-4.41 0-8-3.59-8-8s3.59-8 8-8 8 3.59 8 8-3.59 8-8 8zm0-14c-2.21 0-4 1.79-4 4h2c0-1.1.9-2 2-2s2 .9 2 2c0 2-3 1.75-3 5h2c0-2.25 3-2.5 3-5 0-2.21-1.79-4-4-4z"></path></svg></button><div class="ds-help-panel" id="server-map-help" data-ui-help-panel hidden aria-label="서버 구조와 연결 상태 범례"><strong class="ds-help-title">서버 구조와 연결 상태</strong><div class="ds-help-content"><p>프로젝트를 고르면 <b>GitLab → Nexus → 배포시스템 → 대상 서버</b> 흐름이 가로로 펼쳐집니다.</p><p>파이프 색으로 연결 상태를 구분합니다. <b>초록</b>은 정상, <b>노랑</b>은 연결되어 있으나 최근 실패가 있는 상태, <b>빨강</b>은 연결 끊김입니다.</p></div><div class="ds-help-foot"><button class="btn btn-primary ds-help-close" type="button" data-ui-help-close>닫기</button></div></div></div></div>
+    <div style="display:flex;gap:10px;align-items:flex-end;flex-wrap:wrap">
+      <div class="form-group" style="margin:0;min-width:280px">
+        <label class="form-label" for="sm-project">프로젝트</label>
+        <select class="form-select" id="sm-project" onchange="smLoad()">
+          <option value="">— 프로젝트를 선택하세요 —</option>
+          <option value="__all__">전체 (서버 등록 순)</option>
+          <option th:each="p : ${projects}" th:value="${p.id}" th:text="${p.name}">project</option>
+        </select>
+      </div>
+      <p class="muted" id="sm-container" style="margin:0 0 10px">&nbsp;</p>
+    </div>
+  </div>
+
+  <div class="section-card" id="sm-arch-card" style="display:none">
+    <div class="section-card-header">
+      <div>
+        <h3>파이프라인 구조</h3>
+        <p class="section-sub" id="sm-arch-sub">소스에서 대상 서버까지의 흐름과 연결 상태입니다.</p>
+      </div>
+      <button class="btn btn-ghost sm" type="button" onclick="smCheckLinks()" id="sm-arch-check">연결 확인</button>
+    </div>
+    <div id="sm-arch">
+      <p class="muted" style="text-align:center;padding:36px 0;margin:0">
+        위에서 프로젝트를 선택하면 구조가 표시됩니다.
+      </p>
+    </div>
+  </div>
+
+  <div id="sm-empty" class="section-card">
+    <p class="muted" style="text-align:center;padding:36px 0;margin:0">
+      위에서 프로젝트를 선택하면 구조가 표시됩니다.
+    </p>
+  </div>
+
+  <!-- 실시간 로그 — 좌: 배포 실행 기록 / 우: 컨테이너 로그(자동 갱신) -->
+  <div class="modal-overlay" id="sm-log-modal" style="display:none">
+    <div class="modal-box sm-log-box" role="dialog" aria-modal="true" aria-labelledby="sm-log-title">
+      <div class="modal-header">
+        <h3 class="modal-title" id="sm-log-title">서비스 로그</h3>
+        <button class="modal-close" onclick="smCloseLog()" aria-label="닫기">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+        </button>
+      </div>
+      <p class="sm-log-sub" id="sm-log-sub">&nbsp;</p>
+      <div class="modal-body sm-log-panes">
+        <section class="sm-log-pane">
+          <h4 class="sm-log-pane-title">배포 로그 <span>최근 실행 기록</span></h4>
+          <div class="sm-log-scroll" id="sm-log-body"></div>
+        </section>
+        <section class="sm-log-pane">
+          <h4 class="sm-log-pane-title">
+            실행 로그 <span id="sm-tail-meta">연결 중…</span>
+            <label class="toggle-switch sm-tail-toggle" title="끄면 로그가 멈춥니다">
+              <input type="checkbox" id="sm-tail-follow" checked onchange="smTailToggle()">
+              <span class="toggle-track"><span class="toggle-thumb"></span></span>
+              <span class="sm-tail-toggle-label">자동 갱신</span>
+            </label>
+          </h4>
+          <div class="sm-tail-find">
+            <label class="sr-only" for="sm-tail-q">로그 검색</label>
+            <input class="form-input" id="sm-tail-q" type="search" placeholder="로그에서 찾기 (예: ERROR)"
+                   autocomplete="off" oninput="smFind()" onkeydown="smFindKey(event)">
+            <span class="sm-tail-hits" id="sm-tail-hits"></span>
+            <button class="btn btn-ghost sm" type="button" onclick="smFindStep(-1)"
+                    aria-label="이전 결과" title="이전 (Shift+Enter)">↑</button>
+            <button class="btn btn-ghost sm" type="button" onclick="smFindStep(1)"
+                    aria-label="다음 결과" title="다음 (Enter)">↓</button>
+          </div>
+          <!-- 로그 영역과 NEW 배지를 함께 담는다. 배지는 이 안에서 하단 중앙에 뜬다. -->
+          <div class="sm-tail-wrap">
+            <pre class="sm-tail-out" id="sm-tail-out" onscroll="smTailOnScroll()"
+                 aria-live="polite" aria-label="컨테이너 실행 로그"></pre>
+            <button type="button" class="sm-tail-new" id="sm-tail-new" onclick="smTailToBottom()">
+              새 로그
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                   stroke-width="3" aria-hidden="true"><polyline points="6 9 12 15 18 9"/></svg>
+            </button>
+          </div>
+        </section>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-ghost" onclick="smCloseLog()">닫기</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- 기동/정지/재기동 실행 — 무슨 일이 일어나는지 보면서 기다린다 -->
+  <div class="modal-overlay" id="sm-exec-modal" style="display:none">
+    <div class="modal-box sm-exec-box" role="dialog" aria-modal="true" aria-labelledby="sm-exec-title">
+      <div class="modal-header">
+        <h3 class="modal-title" id="sm-exec-title">서비스 기동</h3>
+        <button class="modal-close" onclick="smExecClose()" aria-label="닫기" id="sm-exec-x" disabled>
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+        </button>
+      </div>
+      <div class="modal-body">
+        <!-- 무엇을 어디에 하는 중인지 — 창만 보고도 알 수 있어야 한다 -->
+        <div class="sm-exec-target">
+          <span class="sm-exec-act" id="sm-exec-act">재기동</span>
+          <span class="sm-exec-where"><b id="sm-exec-server">-</b><span id="sm-exec-proj"></span></span>
+        </div>
+
+        <!-- 어디까지 왔는지. 실제로 아는 것만 표시한다(전송 여부 · 응답 여부) -->
+        <ol class="sm-steps" id="sm-exec-steps">
+          <li data-key="send"><span class="sm-step-dot"></span><span>명령 전송</span></li>
+          <li data-key="run"><span class="sm-step-dot"></span><span>원격 실행</span></li>
+          <li data-key="done"><span class="sm-step-dot"></span><span>결과 확인</span></li>
+        </ol>
+
+        <div class="sm-exec-bar" id="sm-exec-bar"><i></i></div>
+
+        <div class="sm-exec-head" id="sm-exec-head" role="status" aria-live="polite"></div>
+
+        <h4 class="sm-log-pane-title" style="margin-top:12px">
+          실행 로그 <span id="sm-exec-meta">연결 중…</span>
+        </h4>
+        <pre class="sm-tail-out sm-exec-out" id="sm-exec-out" aria-label="실행 중 컨테이너 로그"></pre>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-ghost" onclick="smExecClose()" id="sm-exec-close" disabled>닫기</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- 간헐 오류 상세 -->
+  <div class="modal-overlay" id="sm-warn-modal" style="display:none">
+    <div class="modal-box" style="max-width:820px" role="dialog" aria-modal="true" aria-labelledby="sm-warn-title">
+      <div class="modal-header">
+        <h3 class="modal-title" id="sm-warn-title">간헐 오류 상세</h3>
+        <button class="modal-close" onclick="smCloseWarn()" aria-label="닫기">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+        </button>
+      </div>
+      <div class="modal-body" id="sm-warn-body" style="max-height:60vh;overflow:auto"></div>
+      <div class="modal-footer">
+        <button class="btn btn-ghost" onclick="smCloseWarn()">닫기</button>
+      </div>
+    </div>
+  </div>
+
+  <script th:inline="javascript">
+  /* ═══════════════════════════════════════════
+     서버 구조 · 제어
+
+     구조도와 제어를 한 곳에 둔다. 따로 두면 "무엇이 문제인지" 는 구조도에서 보고
+     "그걸 어떻게 할지" 는 다른 곳에서 찾아야 한다 — 눈이 오가는 만큼 실수가 는다.
+
+     세 축을 각각 다른 속도로 가져온다.
+       구조     DB·설정만        즉시
+       연결     TCP 두드리기      느림(끊긴 곳은 타임아웃)
+       서비스   서버마다 SSH      가장 느림
+     한 번에 묶으면 가장 느린 축에 맞춰 화면이 뜬다. 급할 때 제일 안 보인다.
+
+     "전체" 는 프로젝트마다 이 세 축을 따로 들고 있다. 구조는 한꺼번에 받아 먼저 그리고,
+     느린 두 축은 프로젝트 순서대로 채운다 — 앞엣것부터 쓸 수 있게.
+  ═══════════════════════════════════════════ */
+  var SM_ALL = '__all__';
+  var smMode = null;              // null · 'one' · 'all'
+  var smCards = [];               // [{ projectId, arch, health, svc, busy, container, reqLabel }]
+  // 공유 서버의 제어·로그는 카드의 프로젝트와 서버를 함께 식별한다.
+
+  function smEsc(s) {
+    return String(s == null ? '' : s)
+      .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+  }
+
+  var SM_ICON = {
+    danger: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" aria-hidden="true">'
+      + '<path d="M12 9v4"/><path d="M12 17h.01"/>'
+      + '<path d="M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z"/></svg>',
+    busy: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" aria-hidden="true">'
+      + '<circle cx="12" cy="12" r="9" opacity=".25"/><path d="M21 12a9 9 0 0 0-9-9"/></svg>',
+    warn: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" aria-hidden="true">'
+      + '<circle cx="12" cy="12" r="9"/><path d="M12 8v5"/><path d="M12 16.5h.01"/></svg>',
+    ok: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" aria-hidden="true">'
+      + '<circle cx="12" cy="12" r="9"/><path d="m8.5 12.5 2.5 2.5 4.5-5"/></svg>',
+  };
+
+  function smBanner(tone, title, detail) {
+    const el = document.getElementById('sm-banner');
+    if (!tone) { el.style.display = 'none'; el.innerHTML = ''; return; }
+    el.className = 'sm-banner ' + tone;
+    el.innerHTML =
+      '<span class="sm-banner-icon' + (tone === 'busy' ? ' spin' : '') + '">' + SM_ICON[tone] + '</span>'
+      + '<span class="sm-banner-text"><b>' + smEsc(title) + '</b>'
+      + (detail ? '<span>' + detail + '</span>' : '') + '</span>';
+    el.style.display = '';
+  }
+
+  var smCard = pid => smCards.find(c => String(c.projectId) === String(pid));
+
+  /* ── 그리기 ── */
+  function smPaint() {
+    const host = document.getElementById('sm-arch');
+    if (!window.DeployTopology || !smCards.length) return;
+
+    // 전체 모드는 프로젝트마다 제목을 달아 구분한다. 한 개일 때는 군더더기라 붙이지 않는다.
+    host.innerHTML = smCards.map(c =>
+      '<div class="sm-proj" data-project="' + c.projectId + '">'
+      + (smMode === 'all'
+          ? '<div class="sm-proj-head"><b>' + smEsc(c.arch.projectName) + '</b>'
+            + '<span class="mono">' + smEsc(c.container || '') + '</span>'
+            + (c.busy ? '<span class="sm-proj-busy">배포 진행 중</span>' : '') + '</div>'
+          : '')
+      + '<div class="sm-proj-body" id="sm-proj-' + c.projectId + '"></div>'
+      + '</div>').join('');
+
+    smCards.forEach(c => {
+      DeployTopology.render(document.getElementById('sm-proj-' + c.projectId),
+        c.arch, c.health, c.svc, { busy: c.busy, projectId: c.projectId });
+    });
+  }
+
+  function smLoad() {
+    const val = document.getElementById('sm-project').value;
+    smCards = [];
+    smMode = !val ? null : (val === SM_ALL ? 'all' : 'one');
+    document.getElementById('sm-container').innerHTML = '&nbsp;';
+    smBanner(null);
+
+    const card = document.getElementById('sm-arch-card');
+    const empty = document.getElementById('sm-empty');
+    if (!smMode) { card.style.display = 'none'; empty.style.display = ''; return; }
+    card.style.display = ''; empty.style.display = 'none';
+    document.getElementById('sm-arch-sub').textContent = smMode === 'all'
+      ? '등록된 모든 프로젝트를 서버 등록 순으로 보여줍니다.'
+      : '소스에서 대상 서버까지의 흐름과 연결 상태입니다.';
+    document.getElementById('sm-arch').innerHTML =
+      '<p class="muted" style="text-align:center;padding:36px 0;margin:0">구조를 불러오는 중…</p>';
+
+    const ids = smMode === 'all'
+      ? Array.from(document.querySelectorAll('#sm-project option'))
+          .map(o => o.value).filter(v => v && v !== SM_ALL)
+      : [val];
+
+    Promise.all(ids.map(id =>
+      Promise.all([
+        fetch('/api/v1/operator/architecture/' + encodeURIComponent(id)).then(r => r.json()),
+        fetch('/api/v1/operator/topology/' + encodeURIComponent(id)).then(r => r.json()),
+      ]).then(([arch, topo]) => {
+        if (!arch || !arch.success) return null;
+        const t = (topo && topo.success && topo.data) || {};
+        const req = t.latestRequest;
+        return {
+          projectId: id, arch: arch.data, health: null, svc: null,
+          container: t.container || '',
+          busy: !!(req && req.inFlight),
+          reqLabel: req ? (req.reqNo + ' · ' + req.environment + ' · ' + req.statusLabel) : '',
+        };
+      }).catch(() => null)
+    )).then(cards => {
+      // 서버 등록 순 — 등록일이 있으면 그것, 없으면 id(auto_increment 라 그 자체가 등록 순서).
+      smCards = cards.filter(Boolean)
+        .sort((a, b) => ((a.arch.firstServer && a.arch.firstServer.sortKey) || Infinity)
+                      - ((b.arch.firstServer && b.arch.firstServer.sortKey) || Infinity));
+      if (!smCards.length) {
+        document.getElementById('sm-arch').innerHTML =
+          '<p class="muted" style="text-align:center;padding:36px 0;margin:0">'
+        + '볼 수 있는 프로젝트가 없습니다.<br>'
+        + '<span style="font-size:12px">프로젝트를 먼저 만들거나, 이 프로젝트를 볼 권한이 있는지 확인하세요.</span>'
+        + '</p>';
+        return;
+      }
+      if (smMode === 'one' && smCards[0].container) {
+        document.getElementById('sm-container').innerHTML =
+          '컨테이너 이름 <code>' + smEsc(smCards[0].container) + '</code>';
+      }
+      smPaint();
+      smTopBanner();
+      smCheckLinks();
+      smLoadServiceStatus();
+    });
+  }
+
+  function smRefresh() { smLoad(); }
+
+  /* ── 배너 — 가장 무거운 것 하나만 띄운다 ──
+     배포 진행 중 > 환경 충돌 > 연결 끊김 > 서비스 정지 > 간헐 오류 > 정상.
+     여러 개를 한꺼번에 띄우면 무엇부터 봐야 할지 사람이 판단해야 한다. */
+  function smTopBanner() {
+    const busy = smCards.filter(c => c.busy);
+    if (busy.length) {
+      smBanner('busy', '지금 배포가 진행 중입니다',
+        busy.map(c => '<code>' + smEsc(c.reqLabel) + '</code>').join(', ')
+        + ' — 끝날 때까지 정지/기동을 잠급니다.');
+      return;
+    }
+    const cross = [];
+    smCards.forEach(c => (c.arch.collisions || []).forEach(x => {
+      if (x.crossEnvironment) cross.push((x.members || []).map(m => m.environment + '/' + m.serverName).join(' = '));
+    }));
+    if (cross.length) {
+      smBanner('danger', '서로 다른 환경이 같은 컨테이너를 가리킵니다',
+        smEsc(cross.join(', ')) + ' — 한쪽을 정지하면 다른 쪽도 함께 멈추고, <b>배포도 서로 덮어씁니다.</b>');
+      return;
+    }
+
+    const broken = [], warn = [], down = [];
+    let svcSeen = 0, svcRunning = 0;
+    smCards.forEach(c => {
+      const h = c.health;
+      if (h) {
+        [{ name: 'GitLab', link: h.gitlab }, { name: 'Nexus', link: h.nexus },
+          { name: '이미지 레지스트리', link: h.registry }].forEach(({ name, link }) => {
+          if (!link || !link.state) {
+            warn.push(name);
+            return;
+          }
+          if (link.state === 'BROKEN') broken.push(name);
+          else if (link.state !== 'OK') warn.push(name);
+        });
+        (h.servers || []).forEach(s => {
+          if (s.state === 'BROKEN') broken.push('대상 서버');
+          else if (s.state === 'WARN') warn.push('대상 서버');
+        });
+      } else {
+        warn.push('연결 상태 확인');
+      }
+      (c.svc || []).forEach(s => {
+        svcSeen++;
+        if (s.running) svcRunning++;
+        else if (s.exists) down.push(s.serverName);
+      });
+    });
+
+    if (broken.length) {
+      smBanner('danger', '연결이 끊긴 구간이 있습니다',
+        [...new Set(broken)].map(smEsc).join(', ') + ' — 이 상태로는 배포가 중간에 멈춥니다.');
+    } else if (down.length) {
+      smBanner('danger', '서비스가 내려가 있습니다',
+        down.map(smEsc).join(', ') + ' — 컨테이너는 있지만 실행 중이 아닙니다. 기동이 필요합니다.');
+    } else if (warn.length) {
+      smBanner('warn', '추가 확인이 필요한 구간이 있습니다',
+        [...new Set(warn)].map(smEsc).join(', ')
+        + ' — 연결 상태, 권한 또는 최근 실행 상태를 확인해야 합니다. 파이프의 <b>!</b> 또는 <b>?</b> 를 눌러 원인을 확인하세요.');
+    } else if (svcSeen && svcSeen === svcRunning) {
+      smBanner('ok', '모든 서비스가 정상 동작 중입니다', '대상 ' + svcSeen + '대 전부 실행 중입니다.');
+    }
+  }
+
+  /* ── 연결 상태 (프로젝트 순서대로) ── */
+  function smCheckLinks() {
+    const btn = document.getElementById('sm-arch-check');
+    if (!smCards.length) return;
+    if (btn) { btn.disabled = true; btn.textContent = '확인 중…'; }
+
+    smCards.reduce((chain, c) => chain.then(() =>
+      fetch('/api/v1/operator/architecture/' + encodeURIComponent(c.projectId) + '/health')
+        .then(r => r.json())
+        .then(res => { if (res && res.success) { c.health = res.data; smPaint(); smTopBanner(); } })
+        .catch(() => {})
+    ), Promise.resolve())
+      .finally(() => { if (btn) { btn.disabled = false; btn.textContent = '연결 확인'; } });
+  }
+
+  /* ── 서비스(컨테이너) 상태 ── */
+  function smLoadServiceStatus(onlyProjectId) {
+    const targets = onlyProjectId ? smCards.filter(c => String(c.projectId) === String(onlyProjectId)) : smCards;
+    targets.reduce((chain, c) => chain.then(() =>
+      fetch('/api/v1/operator/services/' + encodeURIComponent(c.projectId))
+        .then(r => r.json())
+        .then(res => { c.svc = (res && res.success && res.data) || []; smPaint(); smTopBanner(); })
+        .catch(() => { c.svc = []; smPaint(); })
+    ), Promise.resolve());
+  }
+
+  /* ── 제어 ── */
+  function smTargetExists(pid, serverId) {
+    const card = smCard(pid);
+    return !!card && (card.arch.environments || []).some(z => (z.groups || []).some(g =>
+      (g.servers || []).some(s => String(s.serverId) === String(serverId))));
+  }
+
+  function smControl(pid, serverId, action) {
+    if (!smTargetExists(pid, serverId)) return;
+    const status = ((smCard(pid) || {}).svc || []).find(r => String(r.serverId) === String(serverId));
+    if (!status || status.controlSupported === false || status.statusKnown === false) {
+      showToast(status && status.controlReason || '제어 가능한 컨테이너 상태를 먼저 확인하세요.', 'error');
+      return;
+    }
+    const node = document.getElementById('tp-srv-' + pid + '-' + serverId);
+    const name = node ? node.querySelector('b').textContent : ('서버 ' + serverId);
+    const label = action === 'start' ? '기동' : (action === 'stop' ? '정지' : '재기동');
+
+    const go = () => {
+      const box = document.querySelector('[data-actions="' + pid + '-' + serverId + '"]');
+      if (box) box.querySelectorAll('button').forEach(b => { b.disabled = true; });
+      smExecOpen(label, name, pid, serverId, action);
+
+      csrfFetch('/api/v1/operator/services/' + encodeURIComponent(pid) + '/' + serverId + '/' + action,
+                { method: 'POST' })
+        .then(r => r.json())
+        .then(d => {
+          const ok = !!(d && d.success);
+          smExecDone(ok, (d && d.message) || (ok ? label + '했습니다.' : label + '에 실패했습니다.'));
+          showToast((d && d.message) || (label + (ok ? '했습니다.' : '에 실패했습니다.')), ok ? 'success' : 'error');
+        })
+        .catch(() => {
+          smExecDone(false, '네트워크 오류가 발생했습니다.');
+          showToast('네트워크 오류가 발생했습니다.', 'error');
+        })
+        .finally(() => smLoadServiceStatus(pid));
+    };
+
+    if (action === 'stop') {
+      const c = smCard(pid);
+      const shared = ((c && c.arch.collisions) || [])
+        .filter(x => x.crossEnvironment && (x.serverIds || []).indexOf(serverId) >= 0)
+        .flatMap(x => (x.members || []).map(m => m.environment + '/' + m.serverName));
+      openConfirm('서비스 정지',
+        '"' + name + '" 의 서비스를 정지합니다.\n\n'
+        + '재배포가 아니라 이미 떠 있는 컨테이너를 내리는 것이라 버전은 바뀌지 않습니다.\n'
+        + (shared.length
+            ? '\n⚠ 이 컨테이너는 다음과 같은 것입니다: ' + shared.join(', ') + '\n그쪽 서비스도 함께 멈춥니다.\n'
+            : '')
+        + '\n다시 기동할 때까지 이 서버는 서비스하지 않습니다.', go);
+    } else {
+      go();
+    }
+  }
+
+  /* ══ 실행 모달 ══
+     기동·정지·재기동은 SSH 로 원격 명령을 돌리는 일이라 몇 초에서 수십 초가 걸린다.
+     토스트만 띄우고 끝내면 그동안 화면이 아무 말도 하지 않아 "먹은 건가" 싶어 다시 누르게 된다.
+     무슨 일을 하는 중인지 보여 주고, 그 서버의 로그를 함께 흘려 결과를 눈으로 확인하게 한다.
+
+     끝날 때까지 닫기를 막는다 — 명령은 이미 나갔으므로 창을 닫아도 멈추지 않는다.
+     그걸 모르고 닫으면 "취소됐다" 고 오해한다. */
+  var smExecTimer = null;
+  var smExecLines = [];
+  var smExecCtx = null;
+  var smExecTick = null;      // 경과 시간 표시용
+  var smExecStart = 0;
+
+  /* 단계 표시. 우리가 실제로 아는 것만 상태를 바꾼다 —
+     원격에서 컨테이너가 언제 내려가고 언제 올라오는지는 알 수 없으므로
+     가짜 퍼센트를 그리지 않고 "진행 중" 임을 흐르는 막대와 경과 시간으로 알린다. */
+  function smExecStep(key, state) {
+    const li = document.querySelector('#sm-exec-steps li[data-key="' + key + '"]');
+    if (li) li.className = state || '';
+  }
+
+  function smExecOpen(label, serverName, pid, serverId, action) {
+    smExecCtx = { pid: pid, serverId: serverId, label: label };
+    smExecLines = [];
+    smExecStart = Date.now();
+
+    const card = smCard(pid);
+    document.getElementById('sm-exec-title').textContent = '서비스 ' + label;
+    document.getElementById('sm-exec-act').textContent = label;
+    document.getElementById('sm-exec-act').className = 'sm-exec-act act-' + (action || 'start');
+    document.getElementById('sm-exec-server').textContent = serverName;
+    document.getElementById('sm-exec-proj').textContent = card ? card.name : '';
+
+    smExecStep('send', 'done');   // 이 함수는 요청을 보낸 직후에 불린다
+    smExecStep('run', 'active');
+    smExecStep('done', '');
+    document.getElementById('sm-exec-bar').className = 'sm-exec-bar running';
+
+    document.getElementById('sm-exec-head').className = 'sm-exec-head running';
+    smExecElapsed();
+    document.getElementById('sm-exec-out').textContent = '';
+    document.getElementById('sm-exec-meta').textContent = '연결 중…';
+    document.getElementById('sm-exec-close').disabled = true;
+    document.getElementById('sm-exec-x').disabled = true;
+    document.getElementById('sm-exec-modal').style.display = 'flex';
+
+    smExecPoll();
+    smExecTimer = setInterval(smExecPoll, 2000);
+    smExecTick = setInterval(smExecElapsed, 1000);
+  }
+
+  /* 몇 초째인지 세어 준다. 멈춰 있는 것이 아니라 기다리는 중이라는 근거가 된다. */
+  function smExecElapsed() {
+    const head = document.getElementById('sm-exec-head');
+    if (!head || !smExecCtx) return;
+    const sec = Math.max(0, Math.round((Date.now() - smExecStart) / 1000));
+    head.innerHTML = '<span class="sm-exec-spin" aria-hidden="true"></span>'
+      + '<span class="sm-exec-say">원격 서버에서 ' + smEsc(smExecCtx.label) + ' 명령을 실행하는 중입니다'
+      + '<small>' + sec + '초 경과 · 끝나면 닫을 수 있습니다</small></span>';
+  }
+
+  function smExecPoll() {
+    if (!smExecCtx) return;
+    fetch('/api/v1/operator/servers/' + smExecCtx.serverId + '/container-log?projectId='
+          + encodeURIComponent(smExecCtx.pid) + '&lines=120')
+      .then(r => r.json())
+      .then(res => {
+        const d = (res && res.success && res.data) || {};
+        const out = document.getElementById('sm-exec-out');
+        const meta = document.getElementById('sm-exec-meta');
+        if (!out) return;
+        if (d.ok) {
+          const atBottom = out.scrollHeight - out.scrollTop - out.clientHeight < 40;
+          out.textContent = (d.text || '').replace(/\s+$/, '');
+          if (atBottom) out.scrollTop = out.scrollHeight;
+          meta.textContent = new Date().toLocaleTimeString('ko-KR') + ' 갱신';
+        } else {
+          // 정지 중에는 컨테이너가 없어 로그를 못 가져오는 것이 정상이다 — 실패로 보이지 않게 쓴다.
+          meta.textContent = '로그 대기 중';
+          if (!out.textContent) out.textContent = d.text || '';
+        }
+      })
+      .catch(() => {});
+  }
+
+  function smExecDone(ok, message) {
+    if (smExecTimer) { clearInterval(smExecTimer); smExecTimer = null; }
+    if (smExecTick) { clearInterval(smExecTick); smExecTick = null; }
+    smExecPoll();   // 끝난 직후 한 번 더 — 마지막 줄이 빠지지 않게
+
+    const sec = Math.max(0, Math.round((Date.now() - smExecStart) / 1000));
+    smExecStep('run', 'done');
+    smExecStep('done', ok ? 'done' : 'fail');
+    document.getElementById('sm-exec-bar').className = 'sm-exec-bar ' + (ok ? 'ok' : 'fail');
+
+    const head = document.getElementById('sm-exec-head');
+    head.className = 'sm-exec-head ' + (ok ? 'ok' : 'fail');
+    head.innerHTML = '<span class="sm-exec-mark" aria-hidden="true">' + (ok ? '✓' : '✕') + '</span>'
+      + '<span class="sm-exec-say">' + smEsc(message)
+      + '<small>' + sec + '초 걸렸습니다'
+      + (ok ? ' · 아래 로그에서 실제로 떴는지 확인하세요' : ' · 아래 로그에 원인이 남아 있습니다')
+      + '</small></span>';
+    document.getElementById('sm-exec-close').disabled = false;
+    document.getElementById('sm-exec-x').disabled = false;
+    document.getElementById('sm-exec-close').focus();
+  }
+
+  function smExecClose() {
+    if (smExecTimer) { clearInterval(smExecTimer); smExecTimer = null; }
+    if (smExecTick) { clearInterval(smExecTick); smExecTick = null; }
+    smExecCtx = null;
+    document.getElementById('sm-exec-modal').style.display = 'none';
+  }
+
+  /* ══ 실시간 로그 ══
+     좌: 배포 실행 기록(고정) / 우: 컨테이너 로그(자동 갱신)
+
+     우측은 tail -f 를 그대로 물고 있지 않는다. SSH 세션을 계속 잡으면 브라우저 탭 수만큼
+     원격 프로세스가 남고, 클라이언트가 조용히 사라지면 회수되지 않는다.
+     대신 매번 끝나는 docker logs --tail N 을 주기적으로 부르고 새로 늘어난 줄만 잇는다. */
+  var SM_TAIL_INTERVAL_MS = 3000;
+  var SM_TAIL_LINES = 300;
+  var smTailTimer = null;
+  var smTailServerId = null;
+  var smTailProjectId = null;
+  var smTailLines = [];
+  var smTailBusy = false;
+  var smTailFirst = true;         // 처음 채울 때는 무조건 맨 아래로 — 최신 줄이 보여야 한다
+  var smFindQ = '';               // 검색어
+  var smFindIdx = 0;              // 지금 보고 있는 결과 번호
+  var smNewPending = false;       // 위로 올려 읽는 중에 새 줄이 왔다
+
+  function smRenderDeployLog(rows) {
+    const body = document.getElementById('sm-log-body');
+    if (!rows.length) {
+      body.innerHTML = '<p class="muted" style="text-align:center;padding:24px 0;margin:0">'
+        + '이 서버의 실행 기록이 아직 없습니다.</p>';
+      return;
+    }
+    body.innerHTML = rows.map(r => {
+      const when = r.createdAt ? String(r.createdAt).replace('T', ' ').slice(0, 19) : '';
+      const dur = r.durationMs != null ? (Math.round(r.durationMs / 100) / 10) + '초' : '';
+      const out = [r.stdout, r.stderr].filter(Boolean).join('\n').trim();
+      return '<details class="sm-log-item' + (r.success ? '' : ' fail') + '">'
+        + '<summary>'
+        +   '<span class="sm-log-res">' + (r.success ? '성공' : '실패'
+              + (r.exitCode != null ? ' (exit ' + r.exitCode + ')' : '')) + '</span>'
+        +   '<span class="mono sm-log-cmd">' + smEsc(r.command || '') + '</span>'
+        +   '<span class="sm-log-when">' + smEsc(when) + (dur ? ' · ' + dur : '') + '</span>'
+        + '</summary>'
+        + (out ? '<pre class="sm-log-out">' + smEsc(out) + '</pre>'
+               : '<p class="muted" style="margin:6px 0 0">출력이 없습니다.</p>')
+        + '</details>';
+    }).join('');
+  }
+
+  function smShowLog(pid, serverId) {
+    if (!smTargetExists(pid, serverId)) return;
+    smTailStop();
+    const node = document.getElementById('tp-srv-' + pid + '-' + serverId);
+    const name = node ? node.querySelector('b').textContent : '서버';
+    document.getElementById('sm-log-sub').textContent = name;
+    document.getElementById('sm-log-body').innerHTML =
+      '<p class="muted" style="text-align:center;padding:24px 0;margin:0">불러오는 중…</p>';
+    document.getElementById('sm-tail-out').textContent = '';
+    document.getElementById('sm-tail-meta').textContent = '연결 중…';
+    document.getElementById('sm-log-modal').style.display = 'flex';
+
+    fetch('/api/v1/operator/servers/' + serverId + '/logs?projectId='
+          + encodeURIComponent(pid) + '&limit=20')
+      .then(r => r.json())
+      .then(res => smRenderDeployLog((res && res.success && res.data) || []))
+      .catch(() => {
+        document.getElementById('sm-log-body').innerHTML =
+          '<p class="muted" style="text-align:center;padding:24px 0;margin:0">로그를 불러오지 못했습니다.</p>';
+      });
+
+    smTailServerId = serverId;
+    smTailProjectId = pid;
+    smTailLines = [];
+    smTailFirst = true;
+    smFindQ = ''; smFindIdx = 0;
+    document.getElementById('sm-tail-q').value = '';
+    document.getElementById('sm-tail-hits').textContent = '';
+    smSetNewBadge(false);
+    const status = ((smCard(pid) || {}).svc || []).find(r => String(r.serverId) === String(serverId));
+    document.getElementById('sm-tail-follow').disabled = !!status && status.logsSupported === false;
+    if (status && status.logsSupported === false) {
+      smTailServerId = smTailProjectId = null;
+      document.getElementById('sm-tail-meta').textContent = '컨테이너 로그 없음';
+      document.getElementById('sm-tail-out').textContent = '정적 파일·프록시에는 프로젝트 컨테이너 로그가 없습니다. 왼쪽 배포 실행 기록을 확인하세요.';
+      return;
+    }
+    smTailStart();
+  }
+
+  function smTailStart() {
+    smTailStop();
+    smTailPoll();
+    if (document.getElementById('sm-tail-follow').checked) {
+      smTailTimer = setInterval(smTailPoll, SM_TAIL_INTERVAL_MS);
+    }
+  }
+  function smTailStop() { if (smTailTimer) { clearInterval(smTailTimer); smTailTimer = null; } }
+  function smTailToggle() {
+    if (document.getElementById('sm-tail-follow').checked) smTailStart();
+    else { smTailStop(); document.getElementById('sm-tail-meta').textContent = '멈춤'; }
+  }
+
+  /**
+   * 새로 늘어난 줄만 이어 붙인다.
+   *
+   * 매번 마지막 N줄을 통째로 받으므로 그대로 그리면 화면이 깜빡이고 스크롤이 튄다.
+   * 이전에 받은 줄들의 꼬리가 새 응답의 어디서 이어지는지 찾아 그 뒤만 덧붙인다.
+   * 못 찾으면(폴링 사이에 N줄 넘게 쏟아졌거나 컨테이너 재시작) 통째로 갈아 끼우고 그 사실을 표시한다.
+   */
+  function smTailAppend(text) {
+    const fresh = text.replace(/\s+$/, '').split(/\r?\n/).filter(l => l.length);
+    if (!fresh.length) return;
+
+    if (!smTailLines.length) {
+      smTailLines = fresh;
+      smRenderTail(true);
+      return;
+    }
+
+    const prevTail = smTailLines.slice(-Math.min(smTailLines.length, fresh.length));
+    let cut = -1;
+    for (let n = prevTail.length; n > 0; n--) {
+      if (prevTail.slice(prevTail.length - n).join('\n') === fresh.slice(0, n).join('\n')) { cut = n; break; }
+    }
+
+    if (cut < 0) {
+      smTailLines = ['── 로그가 이어지지 않아 새로 불러왔습니다 ──'].concat(fresh);
+      smRenderTail(true);
+      return;
+    }
+    const added = fresh.slice(cut);
+    if (!added.length) return;
+    smTailLines = smTailLines.concat(added).slice(-2000);
+    smRenderTail(true);
+  }
+
+  /**
+   * 로그를 그린다.
+   *
+   * 검색어가 없으면 textContent 로 한 번에 넣는다 — 2000줄을 매번 HTML 로 만들면 눈에 띄게 느리다.
+   * 검색 중일 때만 <mark> 를 심는다.
+   *
+   * @param grew 새 줄이 붙어서 그리는 경우(자동 스크롤 판단에 쓴다)
+   */
+  function smRenderTail(grew) {
+    const out = document.getElementById('sm-tail-out');
+    const wasBottom = smTailAtBottom(out);
+    const text = smTailLines.join('\n');
+
+    if (!smFindQ) {
+      out.textContent = text;
+    } else {
+      // 정규식 특수문자를 그대로 찾을 수 있게 이스케이프한다 — [main] 을 문자 클래스로 읽으면 안 된다.
+      const esc = smEsc(text);
+      const q = smEsc(smFindQ).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      out.innerHTML = esc.replace(new RegExp(q, 'gi'), m => '<mark>' + m + '</mark>');
+      smFindPaint(smFindIdx);
+    }
+    smTailScroll(out, wasBottom, grew);
+  }
+
+  function smTailAtBottom(out) {
+    return out.scrollHeight - out.scrollTop - out.clientHeight < 40;
+  }
+
+  /**
+   * 맨 아래를 보고 있었다면 계속 따라간다. 위로 올려 읽는 중이면 자리를 뺏지 않고,
+   * 대신 "새 로그가 있다" 는 것만 알린다 — 모르고 지나치면 실시간으로 보는 의미가 없다.
+   */
+  function smTailScroll(out, wasBottom, grew) {
+    if (smFindQ) return;                    // 검색 중에는 찾은 자리를 지킨다
+    if (smTailFirst) {                      // 처음 열었을 때는 무조건 맨 아래
+      out.scrollTop = out.scrollHeight;
+      smTailFirst = false;
+      smSetNewBadge(false);
+      return;
+    }
+    if (wasBottom) {
+      out.scrollTop = out.scrollHeight;
+      smSetNewBadge(false);
+    } else if (grew) {
+      smSetNewBadge(true);
+    }
+  }
+
+  /** 아래에 새 로그가 쌓였다는 표시. 누르면 맨 아래로 간다. */
+  function smSetNewBadge(on) {
+    smNewPending = on;
+    const el = document.getElementById('sm-tail-new');
+    if (el) el.classList.toggle('show', !!on);
+  }
+
+  function smTailToBottom() {
+    const out = document.getElementById('sm-tail-out');
+    out.scrollTop = out.scrollHeight;
+    smSetNewBadge(false);
+  }
+
+  /** 사용자가 직접 맨 아래까지 내리면 표시를 지운다. */
+  function smTailOnScroll() {
+    const out = document.getElementById('sm-tail-out');
+    if (smNewPending && smTailAtBottom(out)) smSetNewBadge(false);
+  }
+
+  /* ── 검색 ── */
+  function smFindPaint(idx) {
+    const out = document.getElementById('sm-tail-out');
+    const hits = out.querySelectorAll('mark');
+    const label = document.getElementById('sm-tail-hits');
+    if (!smFindQ) { label.textContent = ''; return; }
+    if (!hits.length) { label.textContent = '결과 없음'; smFindIdx = 0; return; }
+
+    smFindIdx = ((idx % hits.length) + hits.length) % hits.length;
+    hits.forEach((m, i) => m.classList.toggle('current', i === smFindIdx));
+    label.textContent = (smFindIdx + 1) + ' / ' + hits.length;
+  }
+
+  function smFind() {
+    smFindQ = document.getElementById('sm-tail-q').value.trim();
+    smFindIdx = 0;
+    smRenderTail(false);
+    smFindJump();
+  }
+
+  /** 결과 사이를 오간다. 끝에서 처음으로 돌아간다 — 찾다가 막히면 흐름이 끊긴다. */
+  function smFindStep(delta) {
+    const hits = document.getElementById('sm-tail-out').querySelectorAll('mark');
+    if (!hits.length) return;
+    smFindPaint(smFindIdx + delta);
+    smFindJump();
+  }
+
+  function smFindKey(e) {
+    if (e.key !== 'Enter') return;
+    e.preventDefault();
+    smFindStep(e.shiftKey ? -1 : 1);
+  }
+
+  function smFindJump() {
+    const cur = document.querySelector('.sm-tail-out mark.current');
+    if (cur) cur.scrollIntoView({ block: 'center' });
+  }
+
+  function smTailPoll() {
+    if (smTailBusy || !smTailServerId || !smTailProjectId) return;
+    smTailBusy = true;
+    const pollServerId = smTailServerId;
+    const pollProjectId = smTailProjectId;
+    const meta = document.getElementById('sm-tail-meta');
+    fetch('/api/v1/operator/servers/' + smTailServerId + '/container-log?projectId='
+          + encodeURIComponent(smTailProjectId) + '&lines=' + SM_TAIL_LINES)
+      .then(r => r.json())
+      .then(res => {
+        const d = (res && res.success && res.data) || {};
+        if (pollServerId !== smTailServerId || pollProjectId !== smTailProjectId) return;
+        if (d.supported === false) {
+          smTailStop();
+          smTailServerId = smTailProjectId = null;
+          document.getElementById('sm-tail-follow').disabled = true;
+          meta.textContent = '컨테이너 로그 없음';
+          document.getElementById('sm-tail-out').textContent = d.text || '이 배포 유형에는 컨테이너 로그가 없습니다.';
+          return;
+        }
+        if (d.ok) {
+          smTailAppend(d.text || '');
+          meta.textContent = new Date().toLocaleTimeString('ko-KR') + ' 갱신 · ' + (d.container || '');
+        } else {
+          meta.textContent = '가져오지 못함';
+          if (!smTailLines.length) {
+            document.getElementById('sm-tail-out').textContent = d.text || '로그를 가져오지 못했습니다.';
+          }
+        }
+      })
+      .catch(() => { meta.textContent = '네트워크 오류'; })
+      .finally(() => { smTailBusy = false; });
+  }
+
+  function smCloseLog() {
+    smTailStop();
+    smTailServerId = smTailProjectId = null;
+    document.getElementById('sm-log-modal').style.display = 'none';
+  }
+
+  /* ── 간헐 오류 상세 ──
+     파이프의 ! 를 누르면 그 구간에서 문제인 서버들의 실패 실행을 모아 보여준다. */
+  function smShowWarn(pid, serverIds) {
+    const ids = Array.isArray(serverIds) ? serverIds : [serverIds];
+    const targets = ids.filter(id => smTargetExists(pid, id));
+    if (!targets.length) return;
+
+    const body = document.getElementById('sm-warn-body');
+    document.getElementById('sm-warn-title').textContent =
+      targets.length > 1 ? ('문제 구간 상세 — 서버 ' + targets.length + '대') : '문제 구간 상세';
+    body.innerHTML = '<p class="muted" style="text-align:center;padding:24px 0;margin:0">불러오는 중…</p>';
+    document.getElementById('sm-warn-modal').style.display = 'flex';
+
+    Promise.all(targets.map(id => {
+      const node = document.getElementById('tp-srv-' + pid + '-' + id);
+      const name = node ? node.querySelector('b').textContent : ('서버 ' + id);
+      const c = smCard(pid);
+      const h = ((c && c.health && c.health.servers) || []).find(x => x.serverId === id) || {};
+      return fetch('/api/v1/operator/servers/' + id + '/logs?projectId='
+                   + encodeURIComponent(pid) + '&limit=20')
+        .then(r => r.json())
+        .then(res => ({ id, name, h, rows: ((res && res.success && res.data) || []).filter(r => !r.success) }))
+        .catch(() => ({ id, name, h, rows: [] }));
+    })).then(list => {
+      body.innerHTML = list.map(x => {
+        // detail 에 이미 "최근 N회 중 M회 실패" 가 붙어 온다(ArchitectureService) — 여기서 또 붙이지 않는다.
+        const head = '<div class="notice-box warning" style="margin-bottom:10px"><div>'
+          + '<b>' + smEsc(x.name) + '</b><br>' + smEsc(x.h.detail || '상태를 확인하지 못했습니다.')
+          + '</div></div>';
+        if (!x.rows.length) {
+          return head + '<p class="muted" style="margin:0 0 16px">'
+            + '최근 20건 안에서는 실패한 실행을 찾지 못했습니다. 더 오래된 이력일 수 있습니다.</p>';
+        }
+        return head + x.rows.map(r => {
+          const when = r.createdAt ? String(r.createdAt).replace('T', ' ').slice(0, 19) : '';
+          const out = [r.stdout, r.stderr].filter(Boolean).join('\n').trim();
+          return '<details class="sm-log-item fail" open>'
+            + '<summary>'
+            +   '<span class="sm-log-res">실패' + (r.exitCode != null ? ' (exit ' + r.exitCode + ')' : '') + '</span>'
+            +   '<span class="mono sm-log-cmd">' + smEsc(r.command || '') + '</span>'
+            +   '<span class="sm-log-when">' + smEsc(when) + '</span>'
+            + '</summary>'
+            + (out ? '<pre class="sm-log-out">' + smEsc(out) + '</pre>'
+                   : '<p class="muted" style="margin:6px 0 0">출력이 없습니다.</p>')
+            + '</details>';
+        }).join('') + '<div style="height:14px"></div>';
+      }).join('');
+    });
+  }
+
+  function smCloseWarn() { document.getElementById('sm-warn-modal').style.display = 'none'; }
+
+  smLoad();
+
+  </script>
+
+</th:block>
+
+</body>
+</html>

@@ -1,0 +1,90 @@
+<!DOCTYPE html>
+<html xmlns:th="http://www.thymeleaf.org">
+<body>
+<th:block th:fragment="content">
+
+  <div class="page-header">
+    <div>
+      <h1 class="page-title">보안 설정</h1>
+      <p class="page-desc">로그인 2차 인증(OTP) 정책을 관리합니다.</p>
+    </div>
+    <div class="page-actions">
+      <button class="btn btn-primary" onclick="saveSecuritySettings()">저장</button>
+    </div>
+  </div>
+
+  <!-- 2차 인증(OTP) 정책 -->
+  <div class="section-card" style="margin-bottom:20px">
+    <h3 class="section-title">2차 인증(OTP) 정책</h3>
+    <p style="font-size:13px;color:var(--muted);margin:6px 0 16px">
+      정책을 켜면 해당 범위의 계정은 로그인 시 OTP가 강제됩니다. 미등록 계정은 로그인 화면에서 QR 등록부터 진행합니다.
+      <br>오피스 시스템에서 SSO로 진입하는 경우에는 이미 OTP를 통과한 상태이므로 추가로 묻지 않습니다.
+    </p>
+
+    <div style="display:flex;flex-direction:column;gap:14px">
+      <div style="display:flex;align-items:center;justify-content:space-between;padding:14px;border-radius:8px;background:var(--bg-secondary)">
+        <div>
+          <div style="font-size:14px;font-weight:600">관리자 OTP 필수</div>
+          <div style="font-size:12px;color:var(--muted);margin-top:3px">
+            최고 관리자 계정은 로그인할 때 2차 인증(OTP)을 반드시 거칩니다.
+          </div>
+        </div>
+        <label class="toggle-switch">
+          <input type="checkbox" id="otp-require-admin">
+          <span class="toggle-track"><span class="toggle-thumb"></span></span>
+        </label>
+      </div>
+
+      <div style="display:flex;align-items:center;justify-content:space-between;padding:14px;border-radius:8px;background:var(--bg-secondary)">
+        <div>
+          <div style="font-size:14px;font-weight:600">전 사용자 OTP 필수</div>
+          <div style="font-size:12px;color:var(--muted);margin-top:3px">
+            모든 계정에 OTP를 강제합니다. (관리자 OTP 필수 포함)
+          </div>
+        </div>
+        <label class="toggle-switch">
+          <input type="checkbox" id="otp-require-user">
+          <span class="toggle-track"><span class="toggle-thumb"></span></span>
+        </label>
+      </div>
+    </div>
+
+    <p style="font-size:12px;color:var(--muted);margin-top:14px">
+      ※ 개별 계정의 OTP 등록/해제는 좌측 하단 <b>「2차 인증(OTP)」</b> 메뉴에서 본인 계정 기준으로 가능합니다.
+    </p>
+  </div>
+
+  <script>
+  (function(){
+    const _csrf = document.querySelector('meta[name="_csrf"]').content;
+    const _csrfH = document.querySelector('meta[name="_csrf_header"]').content;
+
+    fetch('/api/v1/settings/security')
+      .then(r => r.json())
+      .then(res => {
+        const d = res.data || {};
+        document.getElementById('otp-require-admin').checked = d['otp.require.admin'] === 'true';
+        document.getElementById('otp-require-user').checked = d['otp.require.user'] === 'true';
+      })
+      .catch(()=>{});
+
+    window.saveSecuritySettings = function(){
+      const vals = {
+        'otp.require.admin': String(document.getElementById('otp-require-admin').checked),
+        'otp.require.user': String(document.getElementById('otp-require-user').checked)
+      };
+      fetch('/api/v1/settings/security', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', [_csrfH]: _csrf },
+        body: JSON.stringify(vals)
+      })
+      .then(r => r.json())
+      .then(()=> showToast('보안 설정이 저장되었습니다.', 'success'))
+      .catch(()=> showToast('저장에 실패했습니다.', 'error'));
+    };
+  })();
+  </script>
+
+</th:block>
+</body>
+</html>

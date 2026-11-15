@@ -1,0 +1,11 @@
+[Unit]
+Description=Poll approved Nexus backup queue
+
+[Timer]
+OnBootSec=10
+OnUnitInactiveSec=5
+AccuracySec=1
+Unit=deployops-nexus-backup.service
+
+[Install]
+WantedBy=timers.target

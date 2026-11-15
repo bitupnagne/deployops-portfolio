@@ -1,0 +1,29 @@
+<!DOCTYPE html>
+<html xmlns:th="http://www.thymeleaf.org">
+<body>
+<th:block th:fragment="content">
+
+  <div class="page-header">
+    <div>
+      <h1 class="page-title" th:text="${errorTitle ?: '페이지를 찾을 수 없습니다.'}">페이지를 찾을 수 없습니다.</h1>
+      <p class="page-desc" th:text="${errorMessage ?: '요청한 페이지 또는 데이터를 찾을 수 없습니다.'}">
+        요청한 페이지 또는 데이터를 찾을 수 없습니다.
+      </p>
+    </div>
+  </div>
+
+  <div class="section-card" style="padding:48px 40px;text-align:center">
+    <div style="font-size:56px;font-weight:800;line-height:1;color:var(--text);margin-bottom:12px"
+         th:text="${errorStatus ?: 404}">404</div>
+    <p style="font-size:14px;color:var(--muted);margin-bottom:24px">
+      주소, 파라미터, 권한 조건을 확인한 뒤 다시 시도해 주세요.
+    </p>
+    <div style="display:flex;justify-content:center;gap:12px;flex-wrap:wrap">
+      <button class="btn btn-ghost" onclick="history.back()">이전 페이지</button>
+      <button class="btn btn-primary" data-page="dashboard">대시보드로 이동</button>
+    </div>
+  </div>
+
+</th:block>
+</body>
+</html>

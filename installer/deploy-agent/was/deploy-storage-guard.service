@@ -1,0 +1,13 @@
+[Unit]
+Description=Validate approved storage before starting Deploy managed containers
+After=docker.service remote-fs.target
+Requires=docker.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/deploy/bin/deploy-storage.sh boot
+TimeoutStartSec=120
+UMask=0077
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,24 @@
+[Unit]
+Description=Approved Nexus cold backup queue (root-local)
+After=docker.service
+Requires=docker.service
+
+[Service]
+Type=oneshot
+User=root
+UMask=0077
+ExecStart=/usr/libexec/platform-python /usr/local/lib/deployops/nexus-backup/nexus-backup-broker.py
+# Let the library finish its original-state recovery finally block; no automatic replay.
+TimeoutStartSec=infinity
+TimeoutStopSec=infinity
+KillSignal=SIGTERM
+# Signal only the Python broker. Its handler defers termination until the synchronous
+# helper and Docker client have finished original-state recovery and result fsync.
+KillMode=process
+SendSIGKILL=no
+Restart=no
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectHome=true
+StandardOutput=null
+StandardError=journal
